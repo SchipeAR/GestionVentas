@@ -5,6 +5,7 @@ import pandas as pd
 from calendar import monthrange
 import os
 from streamlit.components.v1 import html as st_html
+import base64, json, requests
 
 # ====== hashing de contraseñas ======
 from passlib.hash import bcrypt as bcrypt_hash
@@ -22,6 +23,17 @@ def get_conn():
     con.execute("PRAGMA journal_mode=WAL;")
     con.execute("PRAGMA synchronous=NORMAL;")
     return con
+# Auto-restore si no hay operaciones locales (pasa en cada reboot de Streamlit Cloud)
+try:
+    with get_conn() as con:
+        row = con.execute("SELECT COUNT(*) FROM operations").fetchone()
+        cant = row[0] if row else 0
+    if cant == 0:
+        if restore_db_from_github_snapshot():
+            st.toast("Base restaurada desde GitHub ✅", icon="✅")
+except Exception as e:
+    st.warning(f"No se pudo restaurar automáticamente: {e}")
+
 
 def init_db():
     with get_conn() as con:
@@ -563,10 +575,23 @@ else:
     )
 
 # --------- 👤 ADMINISTRACIÓN (solo admin) ---------
+st.markdown("### ♻️ Restaurar base desde GitHub (snapshot)")
+if is_admin_user():
+    if st.button("Restaurar ahora"):
+        try:
+            restore_db_from_github_snapshot()
+            st.success("Restauración completa desde GitHub ✅")
+            st.rerun()
+        except Exception as e:
+            st.error(f"Falló la restauración: {e}")
+else:
+    st.info("Solo un administrador puede restaurar la base.")
+
 if is_admin_user:
     import requests
     import streamlit as st
 
+    
     st.markdown("### 📤 Exportar a Google Sheets (ahora mismo)")
     if is_admin():
         if st.button("Exportar ahora (Web App)"):
@@ -1817,6 +1842,116 @@ def _build_listado_dataframes_for_export():
     if not df_multi.empty: df_multi = df_multi[cols_order]
     if not df_uno.empty:   df_uno   = df_uno[cols_order]
     return df_multi, df_uno
+# ========= RESTORE DESDE GITHUB SNAPSHOT =========
+
+def gh_fetch_json(path_in_repo: str):
+    """Descarga y decodifica un JSON del repo/branch configurado en secrets."""
+    repo   = st.secrets["GH_REPO"]
+    branch = st.secrets.get("GH_BRANCH", "main")
+    url = f"https://api.github.com/repos/{repo}/contents/{path_in_repo}"
+    headers = {
+        "Accept": "application/vnd.github+json",
+    }
+    tok = st.secrets.get("GH_TOKEN")
+    if tok:
+        headers["Authorization"] = f"Bearer {tok}"
+    r = requests.get(url, headers=headers, params={"ref": branch}, timeout=30)
+    if r.status_code != 200:
+        raise RuntimeError(f"GitHub {r.status_code}: {r.text[:200]}")
+    obj = r.json()
+    if "content" not in obj:
+        raise RuntimeError("Respuesta GitHub sin 'content'")
+    data = base64.b64decode(obj["content"])
+    return json.loads(data.decode("utf-8"))
+
+def _wipe_local_db():
+    """Borra datos locales para rehidratar desde snapshot (ojo: orden por FK)."""
+    with get_conn() as con:
+        try:
+            con.execute("DELETE FROM installments")
+        except Exception:
+            pass
+        try:
+            con.execute("DELETE FROM operations")
+        except Exception:
+            pass
+
+def restore_db_from_github_snapshot():
+    """
+    Restaura la base local desde data/snapshot.json:
+    - recrea operaciones
+    - recrea cuotas (distribuidas) y marca como pagadas según snapshot (con fecha)
+    - recalcula estados
+    """
+    snap = gh_fetch_json("data/snapshot.json")
+    ops = snap.get("operations", [])
+    iv  = snap.get("installments_venta", [])
+    ic  = snap.get("installments_compra", [])
+
+    # Agrupar cuotas por venta e índice
+    from collections import defaultdict
+    v_by_op = defaultdict(list)
+    c_by_op = defaultdict(list)
+    for r in iv: v_by_op[int(r["operation_id"])].append(r)
+    for r in ic: c_by_op[int(r["operation_id"])].append(r)
+
+    # Limpiar tablas
+    _wipe_local_db()
+
+    # Insertar operaciones y cuotas
+    for op in ops:
+        old_id = int(op.get("id") or 0)
+        total_cuotas = int(op.get("O") or 0)
+        venta_total  = float(op.get("N") or 0.0)
+        price        = float(op.get("purchase_price") or 0.0)
+
+        # Armar objeto compatible con tu upsert (SIN id)
+        new_op = {
+            "tipo": "VENTA",
+            "descripcion": op.get("descripcion") or None,
+            "cliente": op.get("cliente") or None,
+            "proveedor": op.get("proveedor") or None,
+            "zona": op.get("zona") or None,          # vendedor
+            "revendedor": op.get("revendedor") or None,
+            "nombre": op.get("nombre") or None,      # inversor
+            "L": float(op.get("L") or 0.0),          # costo neto
+            "N": float(op.get("N") or 0.0),          # venta
+            "O": int(op.get("O") or 0),              # cuotas
+            "estado": op.get("estado") or "VIGENTE",
+            "comision": float(op.get("comision") or 0.0),
+            "sale_date": op.get("sale_date") or op.get("created_at"),
+            "purchase_price": float(op.get("purchase_price") or 0.0),
+        }
+        new_id = upsert_operation(new_op)  # <- debe devolverte el id nuevo
+
+        # Crear cuotas distribuidas según totales (como hace la app)
+        if total_cuotas > 0:
+            create_installments(new_id, distribuir(venta_total, total_cuotas), is_purchase=False)
+            create_installments(new_id, distribuir(price,        total_cuotas), is_purchase=True)
+
+            # Marcar pagadas con fecha según snapshot
+            # (mapeamos por índice de cuota)
+            i_new_v = {row["idx"]: row for row in list_installments(new_id, is_purchase=False)}
+            i_new_c = {row["idx"]: row for row in list_installments(new_id, is_purchase=True)}
+
+            for r in v_by_op.get(old_id, []):
+                if r.get("paid"):
+                    nv = i_new_v.get(int(r["idx"]))
+                    if nv:
+                        paid_at = r.get("paid_at")
+                        set_installment_paid(nv["id"], True, paid_at_iso=(paid_at or None))
+
+            for r in c_by_op.get(old_id, []):
+                if r.get("paid"):
+                    nc = i_new_c.get(int(r["idx"]))
+                    if nc:
+                        paid_at = r.get("paid_at")
+                        set_installment_paid(nc["id"], True, paid_at_iso=(paid_at or None))
+
+        recalc_status_for_operation(new_id)
+
+    return True
+# ========= /RESTORE DESDE GITHUB SNAPSHOT =========
 
 # >>> Actualiza tu backup para subir también los listados:
 def backup_snapshot_to_github():

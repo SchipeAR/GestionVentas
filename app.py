@@ -1562,4 +1562,73 @@ def backup_zip_bytes():
     mem.seek(0)
     return mem.getvalue()
 # ========= /BACKUP A GITHUB =========
+# === Verificación de backups a GitHub ===
+import requests, io, zipfile, base64, json
+from datetime import datetime, timezone
+import streamlit as st
+
+st.markdown("### 🔍 Verificar backup a GitHub")
+
+# 1) Chequeo rápido de secrets y acceso a la rama
+colA, colB = st.columns(2)
+with colA:
+    repo   = st.secrets.get("GH_REPO", "❌ falta GH_REPO")
+    branch = st.secrets.get("GH_BRANCH", "main")
+    token_ok = bool(st.secrets.get("GH_TOKEN"))
+    st.write("Repo:", repo)
+    st.write("Rama:", branch)
+    st.write("Token cargado:", "✅" if token_ok else "❌")
+
+    ok_branch = False
+    try:
+        r = requests.get(
+            f"https://api.github.com/repos/{repo}/branches/{branch}",
+            headers={"Authorization": f"Bearer {st.secrets['GH_TOKEN']}",
+                     "Accept": "application/vnd.github+json"},
+            timeout=15
+        )
+        ok_branch = (r.status_code == 200)
+        st.write("Acceso a rama:", "✅" if ok_branch else f"❌ ({r.status_code})")
+    except Exception as e:
+        st.error(f"Error consultando la rama: {e}")
+
+with colB:
+    st.caption("Consejos si falla:")
+    st.write("- 404: la rama no existe (creá la rama en GitHub).")
+    st.write("- 403: el token no tiene permiso *contents:write* en ese repo.")
+    st.write("- 409: conflicto (dos escrituras simultáneas). Reintentá.")
+    st.write("- 422: path inválido o contenido mal formateado.")
+
+st.divider()
+
+# 2) Botones de prueba (usan las funciones que ya agregaste)
+col1, col2 = st.columns(2)
+with col1:
+    if st.button("1) Probar escritura simple al repo"):
+        try:
+            ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            # usa tu helper existente gh_upsert_file(...)
+            url = gh_upsert_file(
+                "data/_healthcheck.txt",
+                f"ok {ts}\n".encode("utf-8"),
+                f"healthcheck {ts}"
+            )
+            st.success("Escritura OK ✅")
+            st.write("Archivo:", url)
+        except NameError:
+            st.error("No encuentro la función gh_upsert_file. ¿Pegaste las utilidades de backup?")
+        except Exception as e:
+            st.error(f"Falló la escritura: {e}")
+
+with col2:
+    if st.button("2) Hacer backup REAL ahora"):
+        try:
+            urls = backup_snapshot_to_github()  # sube snapshot.json + CSVs
+            st.success("Backup subido a GitHub ✅")
+            for name, link in urls.items():
+                st.write(f"- {name}: {link}")
+        except NameError:
+            st.error("No encuentro la función backup_snapshot_to_github. ¿Pegaste las utilidades de backup?")
+        except Exception as e:
+            st.error(f"Falló el backup: {e}")
 

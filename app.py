@@ -4,6 +4,7 @@ from datetime import datetime, date
 import pandas as pd
 from calendar import monthrange
 import os
+from streamlit.components.v1 import html as st_html
 
 # ====== hashing de contraseñas ======
 from passlib.hash import bcrypt as bcrypt_hash
@@ -583,76 +584,83 @@ if is_admin_user:
 
 # --------- CREAR / EDITAR VENTA (solo admin crea) ---------
 if is_admin_user:
+    # === CREAR VENTA (con formulario que se limpia y select de vendedores) ===
     with tab_crear:
-        st.subheader("Crear venta")
+        st.subheader("Crear nueva venta")
 
-        # Traer vendedores activos (para asignar la venta)
+        # Traer vendedores activos para asignar la venta
         vend_options = [v["nombre"] for v in list_vendors(active_only=True)]
         if not vend_options:
             st.warning("No hay vendedores cargados. Cargá uno desde 👤 Administración.")
 
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            descripcion = st.text_input("Descripción (celular vendido) *", value="")
-            cliente = st.text_input("Cliente", value="")
-            proveedor = st.text_input("Proveedor", value="")
-            vendedor = st.selectbox("Vendedor", options=vend_options, index=0 if vend_options else None, placeholder="Cargá vendedores en Administración")
-        with col2:
-            inversor = st.select_slider("Inversor", options=INVERSORES, value="GONZA")
-            costo = st.number_input("Costo (neto)", min_value=0.0, value=0.0, step=0.01, format="%.2f")
-            venta = st.number_input("Venta", min_value=0.0, value=0.0, step=0.01, format="%.2f")
-        with col3:
-            cuotas = st.number_input("Cuotas", min_value=0, value=0, step=1)
-            fecha_venta = st.date_input("Fecha de la venta", value=date.today())
+        with st.form("form_crear_venta", clear_on_submit=True):
+            inversor = st.select_slider("Inversor", options=INVERSORES, value="GONZA", key="crear_inversor")
 
-        precio_compra = calcular_precio_compra(costo, inversor)
+            # ahora elegís del listado de vendedores existentes
+            vendedor = st.selectbox(
+                "Vendedor",
+                options=vend_options,
+                placeholder="Elegí un vendedor",
+                key="crear_vendedor"
+            )
 
-        # Nueva comisión (con costo_neto * 1.25)
-        comision_auto = calc_comision_auto(venta, costo)
-        ganancia_neta = (venta - precio_compra) - comision_auto
+            cliente   = st.text_input("Cliente", value="", key="crear_cliente")
+            proveedor = st.text_input("Proveedor", value="", key="crear_proveedor")
+            descripcion = st.text_input("Descripción (celular vendido)", value="", key="crear_desc")
 
-        st.info(
-            f"**Precio de compra (al inversor):** {fmt_money_up(precio_compra)}\n\n"
-            f"**Comisión vendedor (auto):** {fmt_money_up(comision_auto)}\n\n"
-            f"**Ganancia neta (Venta - Compra - Comisión):** {fmt_money_up(ganancia_neta)}"
-        )
+            costo  = st.number_input("Costo (neto)", min_value=0.0, step=0.01, format="%.2f", key="crear_costo")
+            venta  = st.number_input("Venta", min_value=0.0, step=0.01, format="%.2f", key="crear_venta")
+            cuotas = st.number_input("Cuotas", min_value=0, step=1, key="crear_cuotas")
+            fecha  = st.date_input("Fecha de cobro", value=date.today(), key="crear_fecha")
 
+            # Preview (misma lógica que ya usamos)
+            precio_compra = calcular_precio_compra(costo, inversor)
+            comision_auto = calc_comision_auto(venta, costo)
+            ganancia_neta = (venta - precio_compra) - comision_auto
+            st.caption(
+                f"**Preview:** Precio compra = {fmt_money_up(precio_compra)} | "
+                f"Comisión (auto) = {fmt_money_up(comision_auto)} | "
+                f"Ganancia neta = {fmt_money_up(ganancia_neta)}"
+            )
 
-        dist_venta = distribuir(venta, cuotas)
-        dist_compra = distribuir(precio_compra, cuotas)
+            submitted = st.form_submit_button("💾 Guardar venta", disabled=(len(vend_options) == 0))
+            if submitted:
+                if not vendedor:
+                    st.error("Elegí un vendedor antes de guardar.")
+                else:
+                    op = {
+                        "tipo": "VENTA",
+                        "descripcion": descripcion.strip() or None,
+                        "cliente": cliente.strip() or None,
+                        "proveedor": proveedor.strip() or None,
+                        "zona": vendedor.strip(),              # <- vendedor seleccionado
+                        "nombre": inversor.strip(),            # inversor
+                        "L": float(costo) if costo else 0.0,   # costo neto
+                        "N": float(venta) if venta else 0.0,   # venta total
+                        "O": int(cuotas) if cuotas else 0,     # cuotas
+                        "estado": "VIGENTE",
+                        "y_pagado": 0.0,
+                        "comision": float(comision_auto),
+                        "sale_date": to_iso(fecha),            # guarda sin hora (YYYY-MM-DD)
+                        "purchase_price": float(precio_compra)
+                    }
+                    new_id = upsert_operation(op)
 
-        if st.button("Guardar venta", type="primary"):
-            if not descripcion.strip():
-                st.error("La descripción es obligatoria.")
-            elif cuotas <= 0:
-                st.error("Indicá la cantidad de cuotas (mayor a 0).")
-            elif not vend_options:
-                st.error("Cargá al menos un vendedor en 👤 Administración.")
-            else:
-                op = {
-                    "tipo": "VENTA",
-                    "descripcion": descripcion.strip(),
-                    "cliente": cliente.strip() or None,
-                    "proveedor": proveedor.strip() or None,
-                    "zona": (vendedor or "").strip() or None,
-                    "nombre": inversor.strip(),
-                    "L": float(costo) if costo else 0.0,
-                    "N": float(venta) if venta else 0.0,
-                    "O": int(cuotas) if cuotas else 0,
-                    "estado": "VIGENTE",
-                    "y_pagado": 0.0,
-                    "comision": float(comision_auto),
-                    "sale_date": to_iso(fecha_venta) if isinstance(fecha_venta, date) else None,
-                    "purchase_price": float(precio_compra)
-                }
-                op_id = upsert_operation(op)
-                delete_installments(op_id, is_purchase=None)
-                if dist_venta:
-                    create_installments(op_id, dist_venta, is_purchase=False)
-                if dist_compra:
-                    create_installments(op_id, dist_compra, is_purchase=True)
-                recalc_status_for_operation(op_id)
-                st.success(f"Venta guardada (ID {op_id}).")
+                    # cuotas
+                    delete_installments(new_id, is_purchase=None)
+                    if cuotas > 0:
+                        create_installments(new_id, distribuir(venta, cuotas), is_purchase=False)       # VENTA
+                        create_installments(new_id, distribuir(precio_compra, cuotas), is_purchase=True) # COMPRA
+
+                    recalc_status_for_operation(new_id)
+                    st.success(f"Venta #{new_id} creada correctamente.")
+                    try:
+                        urls = backup_snapshot_to_github()
+                        st.toast("Backup subido a GitHub ✅")
+                    except Exception as e:
+                        st.warning(f"No se pudo subir el backup a GitHub: {e}")
+                    st.rerun() # vuelve con el formulario limpio
+
 
 # --------- LISTADO & GESTIÓN ---------
 with tab_listar:
@@ -736,7 +744,7 @@ with tab_listar:
                 "Inversor": op.get("nombre"),
                 "Vendedor": op.get("zona"),
                 "Costo": fmt_money_up(costo_neto),
-                "Precio Compra": "↑",  # se muestra en COMPRA
+                "Precio Compra": "",  # <<< sin flecha en VENTA
                 "Venta": fmt_money_up(venta_total),
                 "Comisión": fmt_money_up(comision_total),
                 "Comisión x cuota": fmt_money_up(comision_x_cuota),
@@ -753,10 +761,11 @@ with tab_listar:
             def up_arrow_if_empty(val):
                 return val if (isinstance(val, str) and val.strip()) else "↑"
 
+            # --- Fila COMPRA (segundo) ---
             rows.append({
                 "Tipo": "COMPRA",
                 "ID venta": op["id"],
-                "Descripción": f"Compra de {op.get('descripcion','')}",
+                "Descripción": "↑",  # <<< solo flecha aquí
                 "Cliente": up_arrow_if_empty(""),
                 "Proveedor": op.get("proveedor") or "",
                 "Inversor": op.get("nombre"),
@@ -774,6 +783,7 @@ with tab_listar:
                 "Fecha de cobro": fmt_date_dmy(fecha_mostrar),
                 "Ganancia": up_arrow_if_empty(""),
             })
+
 
         # ---- DataFrame y orden de columnas ----
         df_ops = pd.DataFrame(rows)
@@ -831,10 +841,10 @@ with tab_listar:
             )
             if total_cuotas > 0:
                 st.markdown(
-                    f"**Valor por cuota (VENTA):** {fmt_money_up(venta_total/total_cuotas)} &nbsp;&nbsp; | "
-                    f"**Valor por cuota (COMPRA):** {fmt_money_up(price/total_cuotas)} &nbsp;&nbsp; | "
+                    f"**Valor por cuota (VENTA):** {fmt_money_up(venta_total/total_cuotas)} | "
                     f"**Comisión x cuota:** {fmt_money_up((float(op.get('comision') or 0.0)/total_cuotas))}"
                 )
+
 
             # Permisos
             puede_editar = is_admin()
@@ -888,6 +898,11 @@ with tab_listar:
                                 set_installment_paid(iid, new_paid, paid_at_iso=(iso_v if new_paid else None))
                         recalc_status_for_operation(op["id"])
                         st.success("Cuotas de VENTA actualizadas.")
+                        try:
+                            urls = backup_snapshot_to_github()
+                            st.toast("Backup subido a GitHub ✅")
+                        except Exception as e:
+                            st.warning(f"No se pudo subir el backup a GitHub: {e}")
                         st.rerun()
 
             # --- Cuotas de COMPRA (pagos al inversor) ---
@@ -939,6 +954,11 @@ with tab_listar:
                                 set_installment_paid(iid, new_paid, paid_at_iso=(iso_c if new_paid else None))
                         recalc_status_for_operation(op["id"])
                         st.success("Cuotas de COMPRA actualizadas.")
+                        try:
+                            urls = backup_snapshot_to_github()
+                            st.toast("Backup subido a GitHub ✅")
+                        except Exception as e:
+                            st.warning(f"No se pudo subir el backup a GitHub: {e}")
                         st.rerun()
 
             # --- Editar venta ---
@@ -992,6 +1012,11 @@ with tab_listar:
                         create_installments(op["id"], distribuir(new_price, new_cuotas), is_purchase=True)
                     recalc_status_for_operation(op["id"])
                     st.success("Venta actualizada y cuotas recalculadas.")
+                    try:
+                        urls = backup_snapshot_to_github()
+                        st.toast("Backup subido a GitHub ✅")
+                    except Exception as e:
+                        st.warning(f"No se pudo subir el backup a GitHub: {e}")
                     st.rerun()
 
             # --- Eliminar venta ---
@@ -1003,6 +1028,11 @@ with tab_listar:
                     if confirmar:
                         delete_operation(op["id"])
                         st.success("Venta eliminada.")
+                        try:
+                            urls = backup_snapshot_to_github()
+                            st.toast("Backup subido a GitHub ✅")
+                        except Exception as e:
+                            st.warning(f"No se pudo subir el backup a GitHub: {e}")
                         st.rerun()
                     else:
                         st.error("Marcá la casilla de confirmación para eliminar.")
@@ -1198,54 +1228,338 @@ else:
     pass
 
 # --------- 📅 CALENDARIO DE COBROS ---------
-try:
-    from streamlit_calendar import calendar
-except Exception:
-    calendar = None
+st.markdown("### 🗓️ Calendario de cobros (cuotas impagas de VENTA)")
+st.caption("Calendario mensual en formato cuadriculado. Cada casillero muestra cuántas cuotas impagas vencen ese día.")
 
-with tab_cal:
-    st.subheader("📅 Calendario de cobros (cuotas impagas de VENTA)")
+# --- 1) Construcción de eventos impagos (si ya armás event_rows en otra parte, podés usarlo) ---
+from datetime import date as _date
+import calendar as _cal
 
-    if calendar is None:
-        st.warning("Para ver el calendario instalá la dependencia: `pip install streamlit-calendar`")
+ops_all = list_operations(user_scope_filters({})) or []
+
+event_rows = []
+for op_ in ops_all:
+    cuotas = list_installments(op_["id"], is_purchase=False) or []
+    for c in cuotas:
+        if not bool(c["paid"]):
+            # fecha de vencimiento de cada cuota
+            base = parse_iso_or_today(op_.get("sale_date") or op_.get("created_at"))
+            due = add_months(base, max(int(c["idx"]) - 1, 0))
+            event_rows.append({
+                "Fecha": due,                           # datetime/date
+                "Vendedor": op_.get("zona") or "",
+                "Cliente": op_.get("cliente") or "",
+                "VentaID": op_["id"],
+                "Cuota": int(c["idx"]),
+                "Monto": float(c["amount"]),
+                "Desc": op_.get("descripcion") or "",
+            })
+
+if not event_rows:
+    st.info("No hay cuotas impagas próximas para mostrar.")
+else:
+    cal_df = pd.DataFrame(event_rows)
+    # Asegurar datetime
+    cal_df["Fecha"] = pd.to_datetime(cal_df["Fecha"], errors="coerce").dt.tz_localize(None)
+    cal_df = cal_df.dropna(subset=["Fecha"])
+
+    # --- 2) Selección de mes/año ---
+    c1, c2 = st.columns(2)
+    with c1:
+        anio = st.number_input("Año", min_value=2000, max_value=2100, value=date.today().year, step=1)
+    with c2:
+        mes = st.number_input("Mes", min_value=1, max_value=12, value=date.today().month, step=1)
+
+    # Filtrar al mes/año elegidos
+    cal_df = cal_df[(cal_df["Fecha"].dt.year == anio) & (cal_df["Fecha"].dt.month == mes)]
+    if cal_df.empty:
+        st.warning("No hay cuotas impagas en el mes seleccionado.")
     else:
-        filtros = user_scope_filters({})
-        ops = list_operations(filtros)
+        # --- 3) Agregados por día ---
+        # Conteo por día y total monto (para tooltip)
+        by_day = (
+            cal_df.groupby(cal_df["Fecha"].dt.date)
+                  .agg(cuotas=("Cuota", "count"), total=("Monto", "sum"))
+                  .reset_index()
+        )
+        # Diccionarios día -> métricas
+        counts = {r["Fecha"]: int(r["cuotas"]) for _, r in by_day.iterrows()}
+        totals = {r["Fecha"]: float(r["total"]) for _, r in by_day.iterrows()}
+        max_count = max(counts.values()) if counts else 1
 
-        if not ops:
-            st.info("No hay ventas registradas todavía.")
-        else:
-            ops_df = build_ops_df(ops)
-            ins_df = build_installments_df(ops)
+        
 
-            df = ins_df[(ins_df["tipo"] == "VENTA") & (ins_df["paid"] == False)].copy()
-            if df.empty:
-                st.info("No hay cuotas impagas para mostrar en el calendario.")
-            else:
-                df["day"] = df["due_date"].apply(lambda d: d.strftime("%Y-%m-%d"))
-                grp = (df.groupby(["day", "vendedor"])
-                         .agg(cuotas=("amount", "size"), total=("amount", "sum"))
-                         .reset_index())
+        # ================== CALENDARIO BONITO + VENDEDORES ==================
+        import calendar as _cal
+        from collections import Counter
+        from datetime import date as _date
 
-                events = []
-                for _, r in grp.iterrows():
-                    title = f"{int(r['cuotas'])} cuota(s) — {r['vendedor'] or 'Sin vendedor'} — ${r['total']:,.2f}"
-                    events.append({
-                        "title": title,
-                        "start": r["day"],
-                    })
+        # vendedores por día (y cuántas cuotas tiene cada uno ese día)
+        vend_by_day = {}
+        for _, r in cal_df.iterrows():
+            d = r["Fecha"].date()
+            v = (r.get("Vendedor") or "").strip() or "—"
+            vend_by_day.setdefault(d, Counter())
+            vend_by_day[d][v] += 1
 
-                calendar_options = {
-                    "initialView": "dayGridMonth",
-                    "locale": "es",
-                    "height": 800,
-                    "weekNumbers": True,
-                    "firstDay": 1,
-                    "headerToolbar": {
-                        "left": "prev,next today",
-                        "center": "title",
-                        "right": "dayGridMonth,timeGridWeek,timeGridDay,listWeek"
-                    },
-                }
-                st.caption("Cada evento resume cuántas cuotas impagas vencen ese día y el vendedor asociado.")
-                calendar(events=events, options=calendar_options)
+        _cal.setfirstweekday(_cal.MONDAY)
+        weeks = _cal.monthcalendar(int(anio), int(mes))
+        max_count = max(counts.values()) if counts else 1
+
+        def _seller_chips_html(day):
+            # hasta 3 chips visibles, el resto como "+N"
+            c = vend_by_day.get(day, {})
+            if not c:
+                return ""
+            # ordenar por más cuotas
+            pares = sorted(c.items(), key=lambda kv: kv[1], reverse=True)
+            chips = []
+            for i, (name, qty) in enumerate(pares):
+                if i >= 3:
+                    break
+                # abreviar nombres largos a 16 chars para que no rompan la caja
+                label = name if len(name) <= 16 else (name[:14] + "…")
+                extra = f" ×{qty}" if qty > 1 else ""
+                chips.append(f"<span class='chip' title='{name} ({qty})'>{label}{extra}</span>")
+            if len(pares) > 3:
+                chips.append(f"<span class='chip more'>+{len(pares)-3}</span>")
+            return "<div class='chips'>" + "".join(chips) + "</div>"
+
+        def _cell_html(d):
+            if d == 0:
+                return '<td class="empty"></td>'
+            day = _date(int(anio), int(mes), int(d))
+            cnt = counts.get(day, 0)
+            ttl = totals.get(day, 0.0)
+
+            # Intensidad/gradiente según cantidad
+            alpha = 0.10 + (0.75 * (cnt / max_count)) if cnt > 0 else 0.0
+            bg = f"linear-gradient(180deg, rgba(0,140,255,{alpha}) 0%, rgba(0,140,255,{alpha*0.55}) 100%)" if cnt > 0 else "var(--cell-bg)"
+            border = "rgba(0,140,255,0.35)" if cnt > 0 else "var(--cell-border)"
+
+            chips = _seller_chips_html(day)
+
+            total_text = fmt_money_up(ttl) if cnt > 0 else ""
+            count_text = str(cnt) if cnt > 0 else ""
+
+            return f"""
+            <td class="cell" style="--bg:{bg}; --border:{border}">
+                <div class="day">{d:02d}</div>
+                <div class="count" title="Cuotas: {count_text}">{count_text}</div>
+                {chips}
+                <div class="total">{total_text}</div>
+            </td>
+            """
+
+        rows_html = "".join("<tr>" + "".join(_cell_html(d) for d in w) + "</tr>" for w in weeks)
+
+        cal_html = f"""
+        <style>
+            :root {{
+                --cell-bg: transparent;
+                --cell-border: rgba(255,255,255,0.12);
+                --shadow: 0 4px 16px rgba(0,0,0,0.25);
+            }}
+            .cal {{
+                width: 100%;
+                border-collapse: separate;
+                border-spacing: 10px;
+                table-layout: fixed;
+                margin-top: 6px;
+            }}
+            .cal th {{
+                text-align:center; font-weight:700; padding:8px; color:#fff;
+            }}
+            .cal td.cell {{
+                height: 108px;
+                border:1px solid var(--cell-border);
+                border-radius:14px;
+                position:relative;
+                background: var(--bg);
+                box-shadow: var(--shadow);
+                overflow:hidden;
+                transition: transform .08s ease-out, box-shadow .12s ease-out;
+            }}
+            .cal td.cell:hover {{
+                transform: translateY(-2px);
+                box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+            }}
+            .cal td.empty {{
+                height: 108px;
+                border:1px dashed rgba(255,255,255,0.10);
+                border-radius:14px; opacity:.35;
+            }}
+            .cal .day {{
+                position:absolute; left:10px; top:8px;
+                font-size:13px; font-weight:600;
+                color:#fff; text-shadow:0 1px 2px rgba(0,0,0,0.6);
+            }}
+            .cal .count {{
+                position:absolute; right:10px; top:8px;
+                font-size:13px; font-weight:700;
+                background: rgba(0,0,0,0.35);
+                padding:2px 6px; border-radius:999px;
+                color:#fff; text-shadow:0 1px 2px rgba(0,0,0,0.6);
+            }}
+            .cal .total {{
+                position:absolute; left:10px; bottom:8px;
+                font-size:13px; font-weight:700;
+                color:#fff; text-shadow:0 1px 2px rgba(0,0,0,0.6);
+            }}
+            .cal .chips {{
+                position:absolute; left:10px; right:10px; bottom:32px;
+                display:flex; flex-wrap:wrap; gap:6px;
+            }}
+            .cal .chip {{
+                font-size:11px; padding:3px 8px; border-radius:10px;
+                background: rgba(0,0,0,0.4);
+                border:1px solid rgba(255,255,255,0.25);
+                color:#fff; font-weight:600;
+                white-space:nowrap; max-width: 100%;
+                text-overflow: ellipsis; overflow:hidden;
+                text-shadow:0 1px 2px rgba(0,0,0,0.7);
+            }}
+            .cal .chip.more {{
+                background: rgba(0,0,0,0.25); font-weight:700; color:#fff;
+            }}
+            </style>
+
+        <table class="cal">
+        <thead><tr>
+            <th>Lun</th><th>Mar</th><th>Mié</th><th>Jue</th><th>Vie</th><th>Sáb</th><th>Dom</th>
+        </tr></thead>
+        <tbody>{rows_html}</tbody>
+        </table>
+        """
+
+        st_html(cal_html, height=(len(weeks) * 140 + 120))
+        # ================== /CALENDARIO BONITO ==================
+
+
+
+        # --- 6) Descargar .ics (no se escribe archivo, solo memoria) ---
+        def make_ics(df):
+            lines = ["BEGIN:VCALENDAR","VERSION:2.0","PRODID:-//GestionVentas//CalendarioCobros//ES"]
+            for _, r in df.iterrows():
+                val = r["Fecha"]
+                if hasattr(val, "date"):   # Timestamp/datetime
+                    f = val.date()
+                elif isinstance(val, _date):
+                    f = val
+                else:
+                    f = parse_iso_or_today(str(val)).date()
+                dtstart = f.strftime("%Y%m%d")                    # evento de día completo
+                uid = f"venta{r['VentaID']}-c{r['Cuota']}-{dtstart}@gestion"
+                titulo = f"COBRO #{r['VentaID']} • Cuota {r['Cuota']} • {r['Cliente']}"
+                desc = f"Vendedor: {r['Vendedor']} | {r['Desc']} | Monto: {fmt_money_up(float(r['Monto']))}"
+                lines += ["BEGIN:VEVENT", f"UID:{uid}", f"DTSTART;VALUE=DATE:{dtstart}", f"SUMMARY:{titulo}", f"DESCRIPTION:{desc}", "END:VEVENT"]
+            lines.append("END:VCALENDAR")
+            return "\n".join(lines)
+
+        ics_text = make_ics(cal_df)
+        st.download_button("⬇️ Descargar calendario (.ics)", data=ics_text, file_name="calendario_cobros.ics", mime="text/calendar")
+
+# ========= BACKUP A GITHUB (JSON + CSVs) =========
+import base64, json, requests, io, zipfile
+from datetime import datetime, timezone
+import pandas as pd
+import streamlit as st
+
+def _gh_headers():
+    return {
+        "Authorization": f"Bearer {st.secrets['GH_TOKEN']}",
+        "Accept": "application/vnd.github+json",
+    }
+
+def _gh_api_path(path_in_repo):
+    repo   = st.secrets["GH_REPO"]
+    branch = st.secrets.get("GH_BRANCH", "main")
+    return f"https://api.github.com/repos/{repo}/contents/{path_in_repo}", branch
+
+def gh_upsert_file(path_in_repo: str, content_bytes: bytes, commit_msg: str) -> str:
+    api, branch = _gh_api_path(path_in_repo)
+
+    # Buscar SHA si el archivo ya existe (para update)
+    r = requests.get(api, headers=_gh_headers(), params={"ref": branch})
+    sha = r.json().get("sha") if r.status_code == 200 else None
+
+    payload = {
+        "message": commit_msg,
+        "content": base64.b64encode(content_bytes).decode("utf-8"),
+        "branch": branch,
+    }
+    if sha:
+        payload["sha"] = sha
+
+    r2 = requests.put(api, headers=_gh_headers(), json=payload, timeout=30)
+    r2.raise_for_status()
+    return r2.json()["content"]["html_url"]
+
+def _json_default(o):
+    # Por si aparece algo no serializable (Timestamp, date, Decimal…)
+    try:
+        return o.isoformat()
+    except Exception:
+        return str(o)
+
+def _snapshot_dataframes():
+    """Arma los DataFrames crudos que vamos a subir (operations + installments)."""
+    ops = list_operations(user_scope_filters({})) or []
+
+    rows_iv, rows_ic = [], []
+    for op in ops:
+        vid = op["id"]
+        # Cuotas de VENTA
+        for c in (list_installments(vid, is_purchase=False) or []):
+            r = {"operation_id": vid}
+            r.update(c)
+            rows_iv.append(r)
+        # Cuotas de COMPRA (inversor)
+        for c in (list_installments(vid, is_purchase=True) or []):
+            r = {"operation_id": vid}
+            r.update(c)
+            rows_ic.append(r)
+
+    df_ops = pd.DataFrame(ops)
+    df_iv  = pd.DataFrame(rows_iv)  # installments_venta
+    df_ic  = pd.DataFrame(rows_ic)  # installments_compra
+    return df_ops, df_iv, df_ic
+
+def backup_snapshot_to_github():
+    """Sube 1 JSON y 3 CSVs al repo (se sobreescriben en /data). Devuelve URLs."""
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    commit_msg = f"backup: snapshot {ts}"
+
+    df_ops, df_iv, df_ic = _snapshot_dataframes()
+
+    # JSON único con todo
+    json_blob = {
+        "generated_at": ts,
+        "operations": df_ops.to_dict(orient="records"),
+        "installments_venta": df_iv.to_dict(orient="records"),
+        "installments_compra": df_ic.to_dict(orient="records"),
+    }
+    json_bytes = json.dumps(json_blob, ensure_ascii=False, indent=2, default=_json_default).encode("utf-8")
+
+    urls = {}
+    urls["snapshot.json"] = gh_upsert_file("data/snapshot.json", json_bytes, commit_msg)
+
+    # CSVs (útiles para Excel/Sheets)
+    urls["operations.csv"]          = gh_upsert_file("data/operations.csv", df_ops.to_csv(index=False).encode("utf-8"), commit_msg)
+    urls["installments_venta.csv"]  = gh_upsert_file("data/installments_venta.csv", df_iv.to_csv(index=False).encode("utf-8"), commit_msg)
+    urls["installments_compra.csv"] = gh_upsert_file("data/installments_compra.csv", df_ic.to_csv(index=False).encode("utf-8"), commit_msg)
+
+    return urls
+
+def backup_zip_bytes():
+    """Por si querés un ZIP descargable además (opcional)."""
+    df_ops, df_iv, df_ic = _snapshot_dataframes()
+    mem = io.BytesIO()
+    with zipfile.ZipFile(mem, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("operations.csv", df_ops.to_csv(index=False))
+        zf.writestr("installments_venta.csv", df_iv.to_csv(index=False))
+        zf.writestr("installments_compra.csv", df_ic.to_csv(index=False))
+    mem.seek(0)
+    return mem.getvalue()
+# ========= /BACKUP A GITHUB =========
+

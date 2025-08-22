@@ -1,0 +1,15 @@
+# Ignorar bases de datos locales
+*.db
+*.sqlite
+*.sqlite3
+*.db3
+
+# Algunos nombres comunes por si ya existen
+database.sqlite
+data.db
+ventas.db
+
+# Mantener la carpeta de backups (los CSV/JSON que sube la app)
+!data/
+!data/*.csv
+!data/*.json

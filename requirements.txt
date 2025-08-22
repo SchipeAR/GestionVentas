@@ -5,3 +5,4 @@ passlib==1.7.4
 bcrypt==4.1.2
 streamlit-calendar
 streamlit-aggrid
+requests==2.32.3

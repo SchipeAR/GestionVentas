@@ -2099,6 +2099,9 @@ def restore_db_from_github_snapshot():
     """
     snap = gh_fetch_json("data/snapshot.json")
     ops = snap.get("operations", [])
+    # Evitar restaurar si el snapshot remoto está vacío
+    if not ops:
+        return False
     iv  = snap.get("installments_venta", [])
     ic  = snap.get("installments_compra", [])
 

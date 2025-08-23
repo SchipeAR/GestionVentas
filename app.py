@@ -731,6 +731,19 @@ def deactivate_vendor(vendor_id: int):
     with get_conn() as con:
         con.execute("UPDATE vendors SET activo=0 WHERE id=?", (vendor_id,))
 
+def count_ops_for_vendor_name(nombre: str) -> int:
+    """Cuenta cuántas ventas referencian a este vendedor por nombre (columna zona)."""
+    with get_conn() as con:
+        cur = con.cursor()
+        cur.execute("SELECT COUNT(*) FROM operations WHERE UPPER(zona)=UPPER(?)", (nombre.strip(),))
+        return int(cur.fetchone()[0] or 0)
+
+def delete_vendor(vendor_id: int):
+    """Borra el vendedor del maestro (no toca ventas existentes)."""
+    with get_conn() as con:
+        con.execute("DELETE FROM vendors WHERE id=?", (vendor_id,))
+
+
 # ===== Helpers USERS (admin) =====
 def create_user(username: str, password: str, role: str, vendedor_nombre: str | None):
     if not username or not password:
@@ -845,12 +858,37 @@ if is_admin_user:
         if vendors_all:
             st.markdown("**Vendedores cargados**")
             for v in vendors_all:
-                cols = st.columns([4,2,2])
+                cols = st.columns([5, 2, 2])
+                # nombre + estado
                 cols[0].markdown(f"- {v['nombre']} {'✅' if v.get('activo',1)==1 else '⛔'}")
-                if v.get('activo',1)==1:
-                    if cols[2].button("Desactivar", key=f"deact_v_{v['id']}"):
-                        deactivate_vendor(v["id"])
+
+                # 🗑️ Eliminar (solo si no está usado en ninguna venta)
+                if cols[1].button("Eliminar", key=f"delvend_{v['id']}"):
+                    usos = count_ops_for_vendor_name(v['nombre'])
+                    if usos > 0:
+                        st.error(f"No se puede eliminar: tiene {usos} ventas asociadas. Desactiválo en su lugar.")
+                    else:
+                        delete_vendor(v["id"])
+                        try:
+                            url = backup_snapshot_to_github()
+                            st.success("Vendedor eliminado y backup subido ✅")
+                            if url: st.markdown(f"[Ver commit →]({url})")
+                        except Exception as e:
+                            st.warning(f"Vendedor eliminado. Falló el backup: {e}")
                         st.rerun()
+
+        # 🚫 Desactivar (como ya tenías)
+        if v.get('activo',1)==1:
+            if cols[2].button("Desactivar", key=f"deact_v_{v['id']}"):
+                deactivate_vendor(v["id"])
+                try:
+                    url = backup_snapshot_to_github()
+                    st.success("Vendedor desactivado y backup subido ✅")
+                    if url: st.markdown(f"[Ver commit →]({url})")
+                except Exception as e:
+                    st.warning(f"Desactivado. Falló el backup: {e}")
+                st.rerun()
+
         st.markdown("### 💾 Backup & Restore (GitHub)")
         c1, c2 = st.columns(2)
         with c1:

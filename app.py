@@ -15,8 +15,86 @@ import urllib.parse
 import time
 
 
+st.set_page_config(page_title="Gestión Ventas 2025", layout="wide")
 
-st.set_page_config(page_title="Gestión Ventas 2025 (Ventas + Compras)", layout="wide")
+def load_css():
+    st.markdown("""
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+      :root{
+        --bg:#0b1220; --panel:#111827; --muted:#94a3b8; --text:#e5e7eb;
+        --primary:#22c55e; --primary-2:#16a34a; --danger:#ef4444; --radius:14px;
+      }
+      .stApp{
+        background: radial-gradient(1200px 800px at 10% -10%, #111827 0, #0b1220 40%, #0b1220 100%);
+        font-family: 'Inter', system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial, sans-serif;
+      }
+      .block-container{max-width:1200px; padding-top:1.2rem;}
+      h1{font-size:2rem; line-height:1.15; margin:.2rem 0 .8rem}
+      h2,h3{letter-spacing:.2px}
+      .accent{
+        background: linear-gradient(90deg, var(--primary), #06b6d4);
+        -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+      }
+      .card{
+        background: var(--panel); border:1px solid #1f2937; border-radius:var(--radius);
+        padding:16px; margin:10px 0; box-shadow:0 10px 30px rgba(0,0,0,.25);
+      }
+      .card h3{margin:0 0 .6rem 0; font-weight:600}
+      div[role="tablist"]{gap:.4rem; margin-bottom:.4rem}
+      button[role="tab"]{
+        border-radius:999px !important; padding:.45rem .9rem !important;
+        background:#0f172a !important; color:#cbd5e1 !important; border:1px solid #1f2937 !important;
+      }
+      button[role="tab"][aria-selected="true"]{
+        background: linear-gradient(180deg, #111827, #0b1220) !important;
+        color:#fff !important; border-color:var(--primary) !important; box-shadow: inset 0 0 0 1px var(--primary);
+      }
+      .stTextInput input, .stNumberInput input, .stDateInput input{
+        background:#0b1220; color:var(--text); border:1px solid #1f2937; border-radius:var(--radius);
+      }
+      .stTextArea textarea{
+        background:#0b1220; color:var(--text); border:1px solid #1f2937; border-radius:var(--radius);
+      }
+      .stSelectbox [role="combobox"]{
+        background:#0b1220; color:var(--text); border:1px solid #1f2937; border-radius:var(--radius);
+      }
+      div.stButton>button{
+        border-radius:12px; padding:.55rem .9rem; border:1px solid #1f2937;
+        background: linear-gradient(180deg,#111827,#0b1220); color:#e5e7eb;
+        transition: transform .04s ease, box-shadow .2s ease, border-color .2s ease;
+      }
+      div.stButton>button:hover{transform:translateY(-1px); border-color:#334155; box-shadow:0 8px 24px rgba(0,0,0,.25)}
+      div.stButton>button:active{transform:translateY(0)}
+      div.stButton>button[kind="primary"]{
+        background: linear-gradient(180deg, var(--primary), var(--primary-2)) !important;
+        border-color: var(--primary-2) !important; color:#04110a !important; font-weight:600;
+      }
+      details[data-testid="stExpander"]{
+        border:1px solid #1f2937; border-radius:var(--radius); background:var(--panel);
+      }
+      details[data-testid="stExpander"] > summary{color:var(--text); font-weight:600}
+      .stDataFrame thead tr th{background:#0f172a; color:#cbd5e1}
+      .stDataFrame tbody tr:hover{background:#0f1220cc}
+      .badge{
+        display:inline-flex; align-items:center; gap:.35rem; padding:.2rem .6rem;
+        background:#0f172a; border:1px solid #1f2937; color:#9ca3af; border-radius:999px; font-size:.78rem;
+      }
+    </style>
+    """, unsafe_allow_html=True)
+
+# ¡Llamalo!
+load_css()
+
+from contextlib import contextmanager
+
+@contextmanager
+def card(title:str="", icon:str=""):
+    st.markdown(f"<div class='card'>", unsafe_allow_html=True)
+    if title:
+        st.markdown(f"<h3>{icon} {title}</h3>", unsafe_allow_html=True)
+    yield
+    st.markdown("</div>", unsafe_allow_html=True)
 
 DB_PATH = "ventas.db"
 DELETE_SALES_PASSWORD = "totoborrar"   # contraseña para borrar ventas
@@ -838,95 +916,96 @@ if is_admin_user:
 
     with tab_admin:
         st.subheader("👤 Administración")
-        # --- Vendedores (maestro)
-        st.markdown("### 📇 Vendedores")
-        colv1, colv2 = st.columns([2,1])
-        with colv1:
-            nuevo_vend = st.text_input("Nombre del vendedor (tal cual querés que figure en las ventas)")
-        with colv2:
-            if st.button("Agregar vendedor"):
-                ok, msg = add_vendor(nuevo_vend)
-                try:
-                    url = backup_snapshot_to_github()
-                    st.success("Backup subido a GitHub ✅")
-                    if url: st.markdown(f"[Ver commit →]({url})")
-                except Exception as e:
-                    st.error(f"Falló el backup: {e}")
-                (st.success if ok else st.error)(msg)
-                if ok: st.rerun()
+        with card("Vendedores", "🧑‍💼"):
+            # --- Vendedores (maestro)
+            st.markdown("### 📇 Vendedores")
+            colv1, colv2 = st.columns([2,1])
+            with colv1:
+                nuevo_vend = st.text_input("Nombre del vendedor (tal cual querés que figure en las ventas)")
+            with colv2:
+                if st.button("Agregar vendedor"):
+                    ok, msg = add_vendor(nuevo_vend)
+                    try:
+                        url = backup_snapshot_to_github()
+                        st.success("Backup subido a GitHub ✅")
+                        if url: st.markdown(f"[Ver commit →]({url})")
+                    except Exception as e:
+                        st.error(f"Falló el backup: {e}")
+                    (st.success if ok else st.error)(msg)
+                    if ok: st.rerun()
 
-        vendors_all = list_vendors(active_only=False)
-        if vendors_all:
-            st.markdown("**Vendedores cargados**")
-            for v in vendors_all:
-                cols = st.columns([5, 2, 2])
-                # nombre + estado
-                cols[0].markdown(f"- {v['nombre']} {'✅' if v.get('activo',1)==1 else '⛔'}")
+            vendors_all = list_vendors(active_only=False)
+            if vendors_all:
+                st.markdown("**Vendedores cargados**")
+                for v in vendors_all:
+                    cols = st.columns([5, 2, 2])
+                    # nombre + estado
+                    cols[0].markdown(f"- {v['nombre']} {'✅' if v.get('activo',1)==1 else '⛔'}")
 
-                # 🗑️ Eliminar (solo si no está usado en ninguna venta)
-                if cols[1].button("Eliminar", key=f"delvend_{v['id']}"):
-                    usos = count_ops_for_vendor_name(v['nombre'])
-                    if usos > 0:
-                        st.error(f"No se puede eliminar: tiene {usos} ventas asociadas. Desactiválo en su lugar.")
-                    else:
-                        delete_vendor(v["id"])
-                        try:
-                            url = backup_snapshot_to_github()
-                            st.success("Vendedor eliminado y backup subido ✅")
-                            if url: st.markdown(f"[Ver commit →]({url})")
-                        except Exception as e:
-                            st.warning(f"Vendedor eliminado. Falló el backup: {e}")
-                        st.rerun()
+                    # 🗑️ Eliminar (solo si no está usado en ninguna venta)
+                    if cols[1].button("Eliminar", key=f"delvend_{v['id']}"):
+                        usos = count_ops_for_vendor_name(v['nombre'])
+                        if usos > 0:
+                            st.error(f"No se puede eliminar: tiene {usos} ventas asociadas. Desactiválo en su lugar.")
+                        else:
+                            delete_vendor(v["id"])
+                            try:
+                                url = backup_snapshot_to_github()
+                                st.success("Vendedor eliminado y backup subido ✅")
+                                if url: st.markdown(f"[Ver commit →]({url})")
+                            except Exception as e:
+                                st.warning(f"Vendedor eliminado. Falló el backup: {e}")
+                            st.rerun()
 
-        # 🚫 Desactivar (como ya tenías)
-        if v.get('activo',1)==1:
-            if cols[2].button("Desactivar", key=f"deact_v_{v['id']}"):
-                deactivate_vendor(v["id"])
-                try:
-                    url = backup_snapshot_to_github()
-                    st.success("Vendedor desactivado y backup subido ✅")
-                    if url: st.markdown(f"[Ver commit →]({url})")
-                except Exception as e:
-                    st.warning(f"Desactivado. Falló el backup: {e}")
-                st.rerun()
-
-        st.markdown("### 💾 Backup & Restore (GitHub)")
-        c1, c2 = st.columns(2)
-        with c1:
-            if st.button("💾 Guardar backup ahora"):
-                try:
-                    url = backup_snapshot_to_github()
-                    st.success("Backup subido a GitHub ✅")
-                    if url: st.markdown(f"[Ver commit →]({url})")
-                except Exception as e:
-                    st.error(f"Falló el backup: {e}")
-        with c2:
-            if st.button("♻️ Restaurar último backup"):
-                try:
-                    restore_from_github_snapshot()
-                    st.success("Restaurado desde GitHub ✅")
+            # 🚫 Desactivar (como ya tenías)
+            if v.get('activo',1)==1:
+                if cols[2].button("Desactivar", key=f"deact_v_{v['id']}"):
+                    deactivate_vendor(v["id"])
+                    try:
+                        url = backup_snapshot_to_github()
+                        st.success("Vendedor desactivado y backup subido ✅")
+                        if url: st.markdown(f"[Ver commit →]({url})")
+                    except Exception as e:
+                        st.warning(f"Desactivado. Falló el backup: {e}")
                     st.rerun()
-                except Exception as e:
-                    st.error(f"No se pudo restaurar: {e}")
-        st.markdown("### 📤 Exportar a Google Sheets")
-        if is_admin():
-            c1, c2, c3 = st.columns([1,1,1])
-            if c1.button("Probar conexión"):
-                _ping_webapp()
-            if c2.button("Exportar ahora"):
-                exportar_a_sheets_webapp_desde_sqlite(DB_PATH)  # usa tu DB_PATH = "ventas.db"
-            if c3.button("🧹 Limpiar logs"):
-                st.session_state.export_logs.clear()
-                st.info("Logs limpiados.")
-        else:
-            st.info("Solo un administrador puede exportar a Google Sheets.")
 
-        with st.expander("🔍 Logs de exportación (persisten en la sesión)"):
-            for line in st.session_state.export_logs[-200:]:
-                st.text(line)
+            st.markdown("### 💾 Backup & Restore (GitHub)")
+            c1, c2 = st.columns(2)
+            with c1:
+                if st.button("💾 Guardar backup ahora"):
+                    try:
+                        url = backup_snapshot_to_github()
+                        st.success("Backup subido a GitHub ✅")
+                        if url: st.markdown(f"[Ver commit →]({url})")
+                    except Exception as e:
+                        st.error(f"Falló el backup: {e}")
+            with c2:
+                if st.button("♻️ Restaurar último backup"):
+                    try:
+                        restore_from_github_snapshot()
+                        st.success("Restaurado desde GitHub ✅")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"No se pudo restaurar: {e}")
+            st.markdown("### 📤 Exportar a Google Sheets")
+            if is_admin():
+                c1, c2, c3 = st.columns([1,1,1])
+                if c1.button("Probar conexión"):
+                    _ping_webapp()
+                if c2.button("Exportar ahora"):
+                    exportar_a_sheets_webapp_desde_sqlite(DB_PATH)  # usa tu DB_PATH = "ventas.db"
+                if c3.button("🧹 Limpiar logs"):
+                    st.session_state.export_logs.clear()
+                    st.info("Logs limpiados.")
+            else:
+                st.info("Solo un administrador puede exportar a Google Sheets.")
+
+            with st.expander("🔍 Logs de exportación (persisten en la sesión)"):
+                for line in st.session_state.export_logs[-200:]:
+                    st.text(line)
 
 
-                st.divider()
+                    st.divider()
 
         # --- Usuarios vendedores
         st.markdown("### 👥 Usuarios (vendedores)")
@@ -1002,6 +1081,7 @@ if is_admin_user:
                             st.success("Volvé a iniciar sesión con el nuevo usuario.")
                             st.session_state.clear()
                             st.rerun()
+        with card("Backup & Restore (GitHub)", "💽"):
         # === Diagnóstico y prueba de Backup a GitHub ===
             import base64, requests
             from datetime import datetime, timezone

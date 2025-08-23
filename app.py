@@ -1,6 +1,6 @@
 import streamlit as st
 import sqlite3
-from datetime import datetime, date, timezone
+from datetime import datetime, date
 import pandas as pd
 from calendar import monthrange
 import os
@@ -972,34 +972,38 @@ if is_admin_flag:
         st.info("Solo un administrador puede exportar a Google Sheets.")
 
     with tab_admin:
-        render_backup_restore_diag()
+        # === Guardar backup (snapshot → GitHub) y ZIP local ===
         st.markdown("### 💾 Guardar backup")
-        c1, c2 = st.columns([1,1])
+        col_save_gh, col_zip = st.columns([1,1])
 
-        with c1:
-            if st.button("💾 Guardar backup ahora", type="primary", use_container_width=True):
+        with col_save_gh:
+            if st.button("💾 Guardar backup ahora", type="primary", use_container_width=True, key="btn_backup_now"):
                 try:
-                    urls = backup_snapshot_to_github()  # sube snapshot.json + CSVs a GitHub
+                    urls = backup_snapshot_to_github()
                     st.success("Backup subido a GitHub ✅")
-                    for k, v in urls.items():
-                        if v:
-                            st.write(f"- {k}: {v}")
+                    if isinstance(urls, dict) and urls:
+                        for k, v in urls.items():
+                            if v:
+                                st.write(f"- {k}: {v}")
+                    st.toast("Backup guardado en GitHub ✅", icon="✅")
                 except Exception as e:
                     st.error(f"Error al guardar backup: {e}")
 
-        with c2:
+        with col_zip:
             try:
-                zbytes = backup_zip_bytes()  # crea ZIP local con operations & installments
+                zbytes = backup_zip_bytes()
                 st.download_button(
                     "⬇️ Descargar ZIP de backup",
                     data=zbytes,
                     file_name="backup.zip",
                     mime="application/zip",
-                    use_container_width=True
+                    use_container_width=True,
+                    key="btn_backup_zip"
                 )
             except Exception as e:
                 st.warning(f"No se pudo generar el ZIP: {e}")
 
+        render_backup_restore_diag()
         st.markdown("### ♻️ Restaurar base desde GitHub (snapshot)")
         if st.button("Restaurar ahora", key="btn_restore_now"):
             try:

@@ -942,8 +942,6 @@ st.title("Gestión Ventas 2025 — Ventas + Compras (inversor)")
 
 # =========================
 # Tabs según rol
-# =========================
-# Tabs según rol
 is_admin_flag = is_admin()
 if is_admin_flag:
     tab_admin, tab_listar, tab_reportes, tab_inversores, tab_crear, tab_cal = st.tabs(
@@ -951,20 +949,6 @@ if is_admin_flag:
     )
 else:
     tab_listar, tab_cal = st.tabs(["📋 Listado & gestión", "📅 Calendario"])
-
-
-# --------- 👤 ADMINISTRACIÓN (solo admin) ---------
-st.markdown("### ♻️ Restaurar base desde GitHub (snapshot)")
-if is_admin():
-    if st.button("Restaurar ahora"):
-        try:
-            restore_db_from_github_snapshot()
-            st.success("Restauración completa desde GitHub ✅")
-            st.rerun()
-        except Exception as e:
-            st.error(f"Falló la restauración: {e}")
-else:
-    st.info("Solo un administrador puede restaurar la base.")
 
 if is_admin_flag:
     import requests
@@ -989,6 +973,28 @@ if is_admin_flag:
 
     with tab_admin:
         render_backup_restore_diag()
+        st.markdown("### ♻️ Restaurar base desde GitHub (snapshot)")
+        if st.button("Restaurar ahora", key="btn_restore_now"):
+            try:
+                # opcional: contadores para mostrar el efecto de la restauración
+                before = _ops_count() if "_ops_count" in globals() else None
+
+                ok = restore_db_from_github_snapshot()  # ← usa el snapshot de data/snapshot.json
+                after = _ops_count() if "_ops_count" in globals() else None
+
+                if ok:
+                    msg = "Restaurado ✅"
+                    if before is not None and after is not None:
+                        msg += f" (operaciones: {before} → {after})"
+                    st.success(msg)
+                    st.toast("Base restaurada desde GitHub ✅", icon="✅")
+                    st.rerun()  # recarga la app para ver los datos restaurados
+                else:
+                    st.warning("No se realizó la restauración (snapshot vacío o invalido).")
+            except Exception as e:
+                st.error(f"Error al restaurar: {e}")
+
+
         st.subheader("👤 Administración")
 
         # --- Vendedores (maestro)

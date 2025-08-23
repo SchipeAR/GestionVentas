@@ -1047,24 +1047,7 @@ if is_admin_user:
                     st.rerun()
 
             
-            st.markdown("### 📤 Exportar a Google Sheets")
-            if is_admin():
-                c1, c2, c3 = st.columns([1,1,1])
-                if c1.button("Probar conexión"):
-                    _ping_webapp()
-                if c2.button("Exportar ahora"):
-                    exportar_a_sheets_webapp_desde_sqlite(DB_PATH)  # usa tu DB_PATH = "ventas.db"
-                if c3.button("🧹 Limpiar logs"):
-                    st.session_state.export_logs.clear()
-                    st.info("Logs limpiados.")
-            else:
-                st.info("Solo un administrador puede exportar a Google Sheets.")
-
-            with st.expander("🔍 Logs de exportación (persisten en la sesión)"):
-                for line in st.session_state.export_logs[-200:]:
-                    st.text(line)
-
-
+            
                     st.divider()
         st.markdown("<hr style='border:0; border-top:1px solid #1f2937; margin:10px 0'>", unsafe_allow_html=True)
         # --- Usuarios vendedores
@@ -1216,6 +1199,24 @@ if is_admin_user:
                             st.write(f"• {nombre}: {link}")
                     except Exception as e:
                         st.error(f"No se pudo subir el backup: {e}")
+            st.markdown("### 📤 Exportar a Google Sheets")
+            if is_admin():
+                c1, c2, c3 = st.columns([1,1,1])
+                if c1.button("Probar conexión"):
+                    _ping_webapp()
+                if c2.button("Exportar ahora"):
+                    exportar_a_sheets_webapp_desde_sqlite(DB_PATH)  # usa tu DB_PATH = "ventas.db"
+                if c3.button("🧹 Limpiar logs"):
+                    st.session_state.export_logs.clear()
+                    st.info("Logs limpiados.")
+            else:
+                st.info("Solo un administrador puede exportar a Google Sheets.")
+
+            with st.expander("🔍 Logs de exportación (persisten en la sesión)"):
+                for line in st.session_state.export_logs[-200:]:
+                    st.text(line)
+
+
 
 
 

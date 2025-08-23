@@ -164,6 +164,36 @@ def restore_from_github_snapshot():
 
     return True
 
+def exportar_a_sheets_webapp_desde_sqlite(db_path: str):
+    url   = st.secrets.get("GS_WEBAPP_URL", "")
+    token = st.secrets.get("GS_WEBAPP_TOKEN", "")
+    if not url or not token:
+        st.error("Falta GS_WEBAPP_URL o GS_WEBAPP_TOKEN en Secrets.")
+        return
+
+    # 1) leer tablas de la base
+    with sqlite3.connect(db_path) as con:
+        cur = con.cursor()
+        # todas menos las internas de sqlite
+        tables = [r[0] for r in cur.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")]
+        sheets = []
+        for t in tables:
+            df = pd.read_sql_query(f"SELECT * FROM {t}", con)
+            # encabezados + datos como texto (evita problemas de tipos/NaN)
+            values = [df.columns.tolist()] + df.astype(str).fillna("").values.tolist()
+            sheets.append({"name": t, "values": values})
+
+    # 2) enviar a la Web App por POST (JSON)
+    payload = {"token": token, "sheets": sheets}
+    r = requests.post(url, json=payload, timeout=60)
+    if r.status_code == 200 and "ok" in r.text.lower():
+        st.success("Exportado correctamente ✅ (Google Sheets actualizado)")
+    elif r.status_code == 401 or "unauthorized" in r.text.lower():
+        st.error("Unauthorized: el TOKEN no coincide con el de la Web App.")
+    else:
+        st.error(f"Falló la exportación: {r.status_code} — {r.text[:300]}")
+
 # =========================
 # DB Helpers & Migrations
 # =========================
@@ -722,16 +752,8 @@ if is_admin_user:
     st.markdown("### 📤 Exportar a Google Sheets (ahora mismo)")
     if is_admin():
         if st.button("Exportar ahora (Web App)"):
-            try:
-                url = st.secrets["GS_WEBAPP_URL"]
-                token = st.secrets["GS_WEBAPP_TOKEN"]
-                r = requests.get(url, params={"token": token}, timeout=30)
-                if r.status_code == 200 and "ok" in r.text.lower():
-                    st.success("Exportado correctamente ✅ (Google Sheets actualizado)")
-                else:
-                    st.error(f"Falló la exportación: {r.status_code} — {r.text[:200]}")
-            except Exception as e:
-                st.error(f"Error llamando al Web App: {e}")
+            if st.button("Exportar a Google Sheets"):
+                exportar_a_sheets_webapp_desde_sqlite(DB_PATH)  # usa tu ruta DB_PATH
     else:
         st.info("Solo un administrador puede exportar a Google Sheets.")
 

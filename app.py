@@ -20,105 +20,117 @@ st.set_page_config(layout="wide")
 def load_css():
     st.markdown("""
     <style>
-      /* ===== Fuente + variables ===== */
+      /* ===== Variables en grises ===== */
       @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
       :root{
-        --bg:#0b1220; --panel:#0f172a; --muted:#94a3b8; --text:#e5e7eb;
-        --primary:#22c55e; --primary-2:#16a34a; --danger:#ef4444; --warn:#f59e0b;
-        --ring:#334155; --radius:16px;
+        --bg:#0e0e10;           /* fondo principal */
+        --panel:#141416;        /* tarjetas/paneles */
+        --panel-2:#17181a;      /* leve contraste */
+        --border:#232327;       /* líneas/bordes */
+        --muted:#9aa0a6;        /* texto secundario */
+        --text:#e7e7e7;         /* texto principal */
+        --primary:#22c55e;      /* acciones */
+        --primary-2:#16a34a;
+        --danger:#ef4444;
+        --radius:16px;
       }
+
+      /* ===== Fondo general, 100% gris (sin azules) ===== */
       .stApp{
         background:
-          radial-gradient(800px 400px at 10% -10%, #0e1629 0, transparent 60%),
-          radial-gradient(900px 500px at 110% 10%, #0e1629 0, transparent 60%),
-          linear-gradient(180deg, #0b1220 0%, #0a1020 100%);
-        font-family: 'Inter', system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial, sans-serif;
+          radial-gradient(900px 500px at 10% -10%, #17181a 0, transparent 55%),
+          radial-gradient(900px 500px at 110% 10%, #1a1b1e 0, transparent 55%),
+          linear-gradient(180deg, #0e0e10 0%, #0b0b0c 100%);
+        font-family:'Inter', system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial, sans-serif;
+        color: var(--text);
       }
-      .block-container{max-width:1200px; padding-top:1.2rem;}
+      .block-container{max-width:1200px; padding-top:1.1rem;}
 
       /* ===== Títulos ===== */
       h1{font-size:2rem; line-height:1.15; margin:.2rem 0 1rem}
       h2,h3{letter-spacing:.2px}
       .accent{
-        background: linear-gradient(90deg, var(--primary), #06b6d4);
+        background: linear-gradient(90deg, var(--text), #cfcfcf);
         -webkit-background-clip: text; -webkit-text-fill-color: transparent;
       }
 
       /* ===== Tarjetas ===== */
       .card{
-        background: var(--panel);
-        border:1px solid #1f2937;
+        background: linear-gradient(180deg, var(--panel), var(--panel-2));
+        border:1px solid var(--border);
         border-radius:var(--radius);
         padding:18px; margin:12px 0;
-        box-shadow: 0 20px 50px rgba(0,0,0,.35), inset 0 1px 0 rgba(255,255,255,.02);
+        box-shadow: 0 18px 45px rgba(0,0,0,.35), inset 0 1px 0 rgba(255,255,255,.02);
       }
       .card h3{margin:0 0 .8rem 0; font-weight:600}
 
-      /* ===== Tabs ===== */
-      div[role="tablist"]{gap:.4rem; margin-bottom:.6rem}
+      /* ===== Tabs redondeadas ===== */
+      div[role="tablist"]{gap:.45rem; margin-bottom:.65rem}
       button[role="tab"]{
-        border-radius:999px !important; padding:.5rem 1rem !important;
-        background:#0c1324 !important; color:#cbd5e1 !important; border:1px solid #1f2937 !important;
+        border-radius:999px !important; padding:.52rem 1rem !important;
+        background:#121214 !important; color:#c9c9c9 !important; border:1px solid var(--border) !important;
       }
       button[role="tab"][aria-selected="true"]{
-        background: linear-gradient(180deg, #121a31, #0b1220) !important;
+        background: linear-gradient(180deg, #1a1b1d, #121213) !important;
         color:#fff !important; border-color: var(--primary) !important;
-        box-shadow: 0 0 0 2px rgba(34,197,94,.15);
+        box-shadow: 0 0 0 2px rgba(34,197,94,.14);
       }
 
-      /* ===== Inputs ===== */
+      /* ===== Inputs/Selects en gris ===== */
       .stTextInput input, .stNumberInput input, .stDateInput input,
       .stSelectbox [role="combobox"], .stTextArea textarea{
-        background:#0b1220; color:var(--text);
-        border:1px solid #1f2937; border-radius:12px;
+        background:#0f1011; color:var(--text);
+        border:1px solid var(--border); border-radius:12px;
       }
       .stTextInput input:focus, .stNumberInput input:focus,
       .stDateInput input:focus, .stSelectbox [role="combobox"]:focus,
       .stTextArea textarea:focus{
-        border-color: var(--ring); box-shadow: 0 0 0 3px rgba(148,163,184,.15);
+        border-color:#2c2d31; box-shadow: 0 0 0 3px rgba(120,120,120,.15);
       }
 
       /* ===== Botones ===== */
       div.stButton>button{
-        border-radius:12px; padding:.6rem 1rem; border:1px solid #1f2937;
-        background: linear-gradient(180deg,#111827,#0b1220); color:#e5e7eb;
+        border-radius:12px; padding:.62rem 1rem; border:1px solid var(--border);
+        background: linear-gradient(180deg,#1a1b1d,#121213); color:#e7e7e7;
         transition: transform .05s ease, box-shadow .2s ease, border-color .2s ease, filter .2s;
       }
-      div.stButton>button:hover{transform:translateY(-1px); border-color:#334155; box-shadow:0 10px 28px rgba(0,0,0,.28)}
+      div.stButton>button:hover{transform:translateY(-1px); border-color:#2f3136; box-shadow:0 10px 28px rgba(0,0,0,.28)}
       div.stButton>button:active{transform:translateY(0)}
-      /* primario */
+      /* primario (verde) */
       div.stButton>button[kind="primary"]{
         background: linear-gradient(180deg, var(--primary), var(--primary-2)) !important;
-        border-color: var(--primary-2) !important; color:#04110a !important; font-weight:600;
-        text-shadow: 0 1px 0 rgba(255,255,255,.3);
+        border-color: var(--primary-2) !important; color:#08150d !important; font-weight:600;
+        text-shadow: 0 1px 0 rgba(255,255,255,.28);
       }
-      /* estilo "peligro" (lo aplicamos con helper, abajo) */
+      /* peligro (rojo) */
       .btn-danger{background:linear-gradient(180deg,#ef4444,#dc2626)!important;color:#fff!important;border-color:#b91c1c!important}
 
-      /* ===== Expanders / tablas ===== */
+      /* ===== Expanders/Tablas ===== */
       details[data-testid="stExpander"]{
-        border:1px solid #1f2937; border-radius:var(--radius); background:var(--panel);
+        border:1px solid var(--border); border-radius:var(--radius); background:var(--panel);
       }
       details[data-testid="stExpander"] > summary{color:var(--text); font-weight:600}
-      .stDataFrame thead tr th{background:#0f172a; color:#cbd5e1}
-      .stDataFrame tbody tr:hover{background:#0b1220cc}
+      .stDataFrame thead tr th{background:#161719; color:#d2d2d2}
+      .stDataFrame tbody tr:hover{background:#111112cc}
 
       /* ===== Badges ===== */
       .badge{
-        display:inline-flex; align-items:center; gap:.35rem; padding:.2rem .6rem;
-        background:#0f172a; border:1px solid #1f2937; color:#9ca3af; border-radius:999px; font-size:.78rem;
+        display:inline-flex; align-items:center; gap:.35rem; padding:.22rem .6rem;
+        background:#151617; border:1px solid var(--border); color:#b7b7b7; border-radius:999px; font-size:.78rem;
       }
+      .badge--danger{background:#201314; border-color:#3a1b1d; color:#ffb3b7}
 
-      /* ===== Header "hero" ===== */
+      /* ===== Hero header en gris ===== */
       .hero{
         display:flex; align-items:center; justify-content:space-between;
         gap:16px; padding:16px 18px; margin: 4px 0 12px;
-        background:linear-gradient(180deg,#0f172a,#0b1220); border:1px solid #1f2937; border-radius:var(--radius);
+        background:linear-gradient(180deg,#18191b,#111113); border:1px solid var(--border); border-radius:var(--radius);
       }
       .hero .title{font-size:1.4rem; font-weight:700}
-      .hero .subtitle{color:#9ca3af; font-size:.95rem}
+      .hero .subtitle{color:#b3b3b3; font-size:.95rem}
     </style>
     """, unsafe_allow_html=True)
+
 
 # ¡Llamalo!
 load_css()

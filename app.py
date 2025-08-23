@@ -1142,7 +1142,6 @@ if is_admin_user:
                             st.session_state.clear()
                             st.rerun()
         with card("Backup & Restore (GitHub)", "💽"):
-            st.markdown("### 💾 Backup & Restore (GitHub)")
             c1, c2 = st.columns(2)
             with c1:
                 if st.button("💾 Guardar backup ahora"):

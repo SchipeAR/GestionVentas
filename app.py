@@ -877,9 +877,9 @@ if is_admin_user:
                     if cols[2].button("Desactivar", key=f"deact_v_{v['id']}"):
                         deactivate_vendor(v["id"])
                         st.rerun()
-        with st.expander("🔍 Logs de exportación (persisten en la sesión)"):
-            for line in st.session_state.export_logs[-200:]:  # últimas 200 líneas
-                st.text(line)
+    with st.expander("🔍 Logs de exportación (persisten en la sesión)"):
+        for line in st.session_state.export_logs[-200:]:  # últimas 200 líneas
+            st.text(line)
 
 
 

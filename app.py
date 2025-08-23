@@ -5,13 +5,102 @@ import pandas as pd
 from calendar import monthrange
 import os
 from streamlit.components.v1 import html as st_html
-
-# ====== hashing de contraseñas ======
+import base64, json, requests, os
 from passlib.hash import bcrypt as bcrypt_hash
 
 st.set_page_config(page_title="Gestión Ventas 2025 (Ventas + Compras)", layout="wide")
 
 DB_PATH = "ventas.db"
+
+# === Backup/Restore a GitHub (snapshot de SQLite) ===
+
+def _gh_cfg():
+    repo   = st.secrets["GH_REPO"]
+    branch = st.secrets.get("GH_BRANCH", "main")
+    path   = st.secrets.get("GH_PATH", "data/ventas.db")
+    url    = f"https://api.github.com/repos/{repo}/contents/{path}"
+    return url, branch
+
+def _gh_headers():
+    return {
+        "Authorization": f"token {st.secrets['GH_TOKEN']}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28"
+    }
+
+def _gh_get_current_sha():
+    url, branch = _gh_cfg()
+    r = requests.get(url, headers=_gh_headers(), params={"ref": branch}, timeout=30)
+    if r.status_code == 200:
+        return r.json().get("sha")
+    if r.status_code == 404:
+        return None
+    raise RuntimeError(f"GitHub GET falló: {r.status_code} — {r.text[:200]}")
+
+def backup_snapshot_to_github():
+    """Sube ventas.db a GH_PATH. Si ya existe, lo actualiza."""
+    url, branch = _gh_cfg()
+    if not os.path.exists(DB_PATH):
+        raise RuntimeError("No existe la base local para respaldar.")
+    with open(DB_PATH, "rb") as f:
+        data_b64 = base64.b64encode(f.read()).decode("ascii")
+
+    payload = {
+        "message": f"Backup ventas.db {datetime.now():%Y-%m-%d %H:%M:%S}",
+        "content": data_b64,
+        "branch": branch
+    }
+    sha = _gh_get_current_sha()
+    if sha:
+        payload["sha"] = sha
+
+    r = requests.put(url, headers=_gh_headers(), json=payload, timeout=60)
+    if r.status_code in (200, 201):
+        j = r.json()
+        return j.get("content", {}).get("html_url") or j.get("commit", {}).get("html_url")
+    raise RuntimeError(f"GitHub PUT falló: {r.status_code} — {r.text[:200]}")
+
+def restore_from_github_snapshot():
+    """Baja GH_PATH y pisa ventas.db local."""
+    url, branch = _gh_cfg()
+    r = requests.get(url, headers=_gh_headers(), params={"ref": branch}, timeout=30)
+    if r.status_code != 200:
+        raise RuntimeError("No hay backup en GitHub o no se puede acceder.")
+
+    j = r.json()
+    content_b64 = j.get("content")
+    if not content_b64:
+        raise RuntimeError("Contenido vacío del backup.")
+    raw = base64.b64decode(content_b64)
+
+    with open(DB_PATH, "wb") as f:
+        f.write(raw)
+
+    # Validación mínima
+    try:
+        with sqlite3.connect(DB_PATH) as con:
+            con.execute("SELECT 1 FROM sqlite_master WHERE type='table' LIMIT 1;").fetchone()
+    except Exception as e:
+        raise RuntimeError(f"Backup descargado inválido: {e}")
+
+    return True
+
+def restore_on_boot_once():
+    """
+    Si la DB no existe o está 'vacía', intenta restaurar una vez al arrancar.
+    Marcamos en session_state para no hacerlo en cada rerun.
+    """
+    if st.session_state.get("_did_boot_restore"):
+        return
+    st.session_state["_did_boot_restore"] = True
+
+    # Si no existe o pesa muy poco, intentamos restaurar.
+    if (not os.path.exists(DB_PATH)) or (os.path.getsize(DB_PATH) < 2048):
+        try:
+            restore_from_github_snapshot()
+            st.toast("Base restaurada desde GitHub ✅")
+        except Exception as e:
+            st.warning(f"No se pudo restaurar el backup (seguís con base vacía): {e}")
 
 # =========================
 # DB Helpers & Migrations
@@ -535,6 +624,7 @@ def rename_admin_user(old_username: str, new_username: str, current_password: st
 # UI
 # =========================
 init_db()
+restore_on_boot_once()
 require_login()
 
 # Sidebar sesión
@@ -585,7 +675,24 @@ if is_admin_user:
 
     with tab_admin:
         st.subheader("👤 Administración")
-
+        st.markdown("### 💾 Backup & Restore (GitHub)")
+        c1, c2 = st.columns(2)
+        with c1:
+            if st.button("💾 Guardar backup ahora"):
+                try:
+                    url = backup_snapshot_to_github()
+                    st.success("Backup subido a GitHub ✅")
+                    if url: st.markdown(f"[Ver commit →]({url})")
+                except Exception as e:
+                    st.error(f"Falló el backup: {e}")
+        with c2:
+            if st.button("♻️ Restaurar último backup"):
+                try:
+                    restore_from_github_snapshot()
+                    st.success("Restaurado desde GitHub ✅")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"No se pudo restaurar: {e}")
         # --- Vendedores (maestro)
         st.markdown("### 📇 Vendedores")
         colv1, colv2 = st.columns([2,1])

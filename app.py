@@ -14,6 +14,30 @@ st.set_page_config(page_title="Gestión Ventas 2025 (Ventas + Compras)", layout=
 
 DB_PATH = "ventas.db"
 
+def _sqlite_consistent_bytes(db_path: str) -> bytes:
+    """
+    Devuelve el contenido de la DB en bytes, consistente,
+    independientemente de que esté en WAL o no.
+    """
+    # archivo temporal donde volcamos un backup "limpio"
+    fd, tmp_path = tempfile.mkstemp(suffix=".db"); os.close(fd)
+    try:
+        # Abrimos la DB real y volcamos WAL -> archivo principal
+        with sqlite3.connect(db_path, timeout=30) as src:
+            # IMPORTANTE: si no está en WAL, no pasa nada; si está, mergea
+            src.execute("PRAGMA wal_checkpoint(TRUNCATE);")
+            # backup nativo y atómico a tmp
+            with sqlite3.connect(tmp_path) as dst:
+                src.backup(dst)
+
+        # Leemos bytes del backup consistente
+        with open(tmp_path, "rb") as f:
+            data = f.read()
+        return data
+    finally:
+        try: os.remove(tmp_path)
+        except: pass
+    
 def _db_is_empty(path: str) -> bool:
     # No existe, muy chica o sin tablas => la consideramos "vacía"
     if (not os.path.exists(path)) or (os.path.getsize(path) < 2048):
@@ -71,16 +95,22 @@ def _gh_get_current_sha():
     raise RuntimeError(f"GitHub GET falló: {r.status_code} — {r.text[:200]}")
 
 def backup_snapshot_to_github():
-    """Sube ventas.db a GH_PATH. Si ya existe, lo actualiza."""
-    url, branch = _gh_cfg()
+    """Sube ventas.db a GH_PATH. Si ya existe, lo actualiza. Evita commits vacíos."""
     if not os.path.exists(DB_PATH):
         raise RuntimeError("No existe la base local para respaldar.")
-    with open(DB_PATH, "rb") as f:
-        data_b64 = base64.b64encode(f.read()).decode("ascii")
 
+    # Consistente (incluye lo del WAL)
+    data = _sqlite_consistent_bytes(DB_PATH)
+
+    # Si el contenido en GitHub es igual, no comiteamos de gusto
+    current = _gh_get_current_bytes_or_none()
+    if current is not None and _sha256_bytes(current) == _sha256_bytes(data):
+        return "Sin cambios: el backup es idéntico al último en GitHub."
+
+    url, branch = _gh_cfg()
     payload = {
         "message": f"Backup ventas.db {datetime.now():%Y-%m-%d %H:%M:%S}",
-        "content": data_b64,
+        "content": base64.b64encode(data).decode("ascii"),
         "branch": branch
     }
     sha = _gh_get_current_sha()

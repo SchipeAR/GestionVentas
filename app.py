@@ -1,7 +1,7 @@
 import streamlit as st
 import sqlite3
 from datetime import datetime, date
-import pandas as pd
+import pandas, json as pd
 from calendar import monthrange
 import os
 from streamlit.components.v1 import html as st_html
@@ -10,6 +10,7 @@ from passlib.hash import bcrypt as bcrypt_hash
 import os, sqlite3, streamlit as st
 import tempfile
 import hashlib
+
 
 
 st.set_page_config(page_title="Gestión Ventas 2025 (Ventas + Compras)", layout="wide")
@@ -164,6 +165,24 @@ def restore_from_github_snapshot():
 
     return True
 
+def _ping_webapp():
+    url   = st.secrets.get("GS_WEBAPP_URL", "")
+    token = st.secrets.get("GS_WEBAPP_TOKEN", "")
+    if not url:
+        st.error("Falta GS_WEBAPP_URL en Secrets.")
+        return False
+    if "script.google.com/macros/s/" not in url or not url.endswith("/exec"):
+        st.error("GS_WEBAPP_URL no es una Web App válida (debe terminar en /exec).")
+        st.write("Valor actual:", url)
+        return False
+    try:
+        r = requests.get(url, params={"token": token}, timeout=20, allow_redirects=True)
+        st.info(f"Ping {urllib.parse.urlparse(r.url).netloc} → {r.status_code}: {r.text[:80]}")
+        return r.status_code == 200
+    except Exception as e:
+        st.error(f"No se pudo contactar la Web App: {e}")
+        return False
+    
 def exportar_a_sheets_webapp_desde_sqlite(db_path: str):
     url   = st.secrets.get("GS_WEBAPP_URL", "")
     token = st.secrets.get("GS_WEBAPP_TOKEN", "")
@@ -171,28 +190,43 @@ def exportar_a_sheets_webapp_desde_sqlite(db_path: str):
         st.error("Falta GS_WEBAPP_URL o GS_WEBAPP_TOKEN en Secrets.")
         return
 
-    # 1) leer tablas de la base
-    with sqlite3.connect(db_path) as con:
-        cur = con.cursor()
-        # todas menos las internas de sqlite
-        tables = [r[0] for r in cur.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")]
-        sheets = []
-        for t in tables:
-            df = pd.read_sql_query(f"SELECT * FROM {t}", con)
-            # encabezados + datos como texto (evita problemas de tipos/NaN)
-            values = [df.columns.tolist()] + df.astype(str).fillna("").values.tolist()
-            sheets.append({"name": t, "values": values})
+    # Diagnóstico de base
+    try:
+        with sqlite3.connect(db_path) as con:
+            cur = con.cursor()
+            tablas = [r[0] for r in cur.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")]
+            if not tablas:
+                st.error("La base existe pero no tiene tablas (o está vacía).")
+                return
+            sheets = []
+            for t in tablas:
+                df = pd.read_sql_query(f"SELECT * FROM {t}", con)
+                values = [df.columns.tolist()] + df.astype(str).fillna("").values.tolist()
+                sheets.append({"name": t, "values": values})
+    except Exception as e:
+        st.exception(e)
+        st.error("No pude leer ventas.db. Revisá la ruta DB_PATH.")
+        return
 
-    # 2) enviar a la Web App por POST (JSON)
+    # Enviar a la Web App con reintento suave
     payload = {"token": token, "sheets": sheets}
-    r = requests.post(url, json=payload, timeout=60)
-    if r.status_code == 200 and "ok" in r.text.lower():
-        st.success("Exportado correctamente ✅ (Google Sheets actualizado)")
-    elif r.status_code == 401 or "unauthorized" in r.text.lower():
-        st.error("Unauthorized: el TOKEN no coincide con el de la Web App.")
-    else:
-        st.error(f"Falló la exportación: {r.status_code} — {r.text[:300]}")
+    for attempt in range(3):
+        try:
+            r = requests.post(url, json=payload, timeout=60)
+            if r.status_code == 200 and "ok" in r.text.lower():
+                st.success("Exportado correctamente ✅ (Google Sheets actualizado)")
+                return
+            if r.status_code == 429:
+                time.sleep(2 * (attempt + 1))
+                continue
+            st.error(f"Falló la exportación: {r.status_code} — {r.text[:300]}")
+            st.write("URL final:", r.url)
+            return
+        except Exception as e:
+            st.error(f"Error de red: {e}")
+            return
+    st.error("429 persistente. Probá de nuevo en unos segundos.")
 
 # =========================
 # DB Helpers & Migrations
@@ -749,13 +783,6 @@ if is_admin_user:
     import requests
     import streamlit as st
 
-    st.markdown("### 📤 Exportar a Google Sheets (ahora mismo)")
-    if is_admin():
-        if st.button("Exportar ahora (Web App)"):
-            if st.button("Exportar a Google Sheets"):
-                exportar_a_sheets_webapp_desde_sqlite(DB_PATH)  # usa tu ruta DB_PATH
-    else:
-        st.info("Solo un administrador puede exportar a Google Sheets.")
 
     with tab_admin:
         st.subheader("👤 Administración")
@@ -777,6 +804,15 @@ if is_admin_user:
                     st.rerun()
                 except Exception as e:
                     st.error(f"No se pudo restaurar: {e}")
+        st.markdown("### 📤 Exportar a Google Sheets (ahora mismo)")
+        if is_admin():
+            if st.button("Probar conexión"):
+                _ping_webapp()
+            if st.button("Exportar ahora (Web App)"):
+                if st.button("Exportar a Google Sheets"):
+                    exportar_a_sheets_webapp_desde_sqlite(DB_PATH)  # usa tu ruta DB_PATH
+        else:
+            st.info("Solo un administrador puede exportar a Google Sheets.")
         # --- Vendedores (maestro)
         st.markdown("### 📇 Vendedores")
         colv1, colv2 = st.columns([2,1])

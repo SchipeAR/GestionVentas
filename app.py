@@ -19,6 +19,7 @@ import time
 st.set_page_config(page_title="Gestión Ventas 2025 (Ventas + Compras)", layout="wide")
 
 DB_PATH = "ventas.db"
+DELETE_SALES_PASSWORD = "totoborrar"   # contraseña para borrar ventas
 
 def _sha256_bytes(b: bytes) -> str:
     h = hashlib.sha256(); h.update(b); return h.hexdigest()
@@ -1520,20 +1521,37 @@ with tab_listar:
             with st.expander("🗑️ Eliminar esta venta", expanded=False):
                 if not is_admin():
                     st.info("Solo un administrador puede eliminar ventas.")
-                confirmar = st.checkbox(f"Sí, quiero eliminar la venta #{op['id']}", key=f"{key_prefix}_delchk_{op['id']}")
+
+                # 1) confirmación visual
+                confirmar = st.checkbox(
+                    f"Sí, quiero eliminar la venta #{op['id']}",
+                    key=f"{key_prefix}_delchk_{op['id']}"
+                )
+
+                # 2) contraseña de borrado (pedida)
+                pwd = st.text_input(
+                    "Contraseña de borrado",
+                    type="password",
+                    key=f"{key_prefix}_delpwd_{op['id']}",
+                    placeholder="Escribí la contraseña",
+                    help="Contraseña requerida para eliminar ventas"
+                )
+
+                # 3) ejecutar borrado sólo si sos admin + confirmás + contraseña correcta
                 if is_admin() and st.button("Eliminar definitivamente", key=f"{key_prefix}_delbtn_{op['id']}"):
-                    if confirmar:
-                        delete_operation(op["id"])
-                        st.success("Venta eliminada.")
-                        try:
-                            url = backup_snapshot_to_github()
-                            st.success("Backup subido a GitHub ✅")
-                            if url: st.markdown(f"[Ver commit →]({url})")
-                        except Exception as e:
-                            st.error(f"Falló el backup: {e}")
-                        st.rerun()
-                    else:
+                    if not confirmar:
                         st.error("Marcá la casilla de confirmación para eliminar.")
+                    elif pwd != DELETE_SALES_PASSWORD:
+                        st.error("Contraseña incorrecta.")
+                    else:
+                        delete_operation(op["id"])
+                        try:
+                            urls = backup_snapshot_to_github()
+                            st.toast("Backup subido a GitHub ✅")
+                        except Exception as e:
+                            st.warning(f"No se pudo subir el backup: {e}")
+                        st.success("Venta eliminada.")
+                        st.rerun()
 
         else:
             st.info("Seleccioná un ID de venta para ver el detalle.")

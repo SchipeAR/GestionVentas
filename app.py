@@ -15,7 +15,7 @@ import urllib.parse
 import time
 
 
-st.set_page_config(page_title="Gestión Ventas 2025", layout="wide")
+st.set_page_config(layout="wide")
 
 def load_css():
     st.markdown("""

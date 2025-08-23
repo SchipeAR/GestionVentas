@@ -7,10 +7,43 @@ import os
 from streamlit.components.v1 import html as st_html
 import base64, json, requests, os
 from passlib.hash import bcrypt as bcrypt_hash
+import os, sqlite3, streamlit as st
+
 
 st.set_page_config(page_title="Gestión Ventas 2025 (Ventas + Compras)", layout="wide")
 
 DB_PATH = "ventas.db"
+
+def _db_is_empty(path: str) -> bool:
+    # No existe, muy chica o sin tablas => la consideramos "vacía"
+    if (not os.path.exists(path)) or (os.path.getsize(path) < 2048):
+        return True
+    try:
+        with sqlite3.connect(path) as con:
+            cnt = con.execute(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table'"
+            ).fetchone()[0]
+        return (cnt or 0) == 0
+    except Exception:
+        return True
+
+def restore_on_boot_once():
+    """
+    Se ejecuta una sola vez por sesión.
+    Si la DB está vacía, intenta restaurar desde GitHub y hace rerun.
+    Requiere que ya exista restore_from_github_snapshot().
+    """
+    if st.session_state.get("_did_boot_restore"):
+        return
+    st.session_state["_did_boot_restore"] = True
+
+    if _db_is_empty(DB_PATH):
+        try:
+            restore_from_github_snapshot()   # <- usa tu función de restore a GH
+            st.toast("Base restaurada desde GitHub ✅")
+            st.rerun()  # recarga la UI ya con datos
+        except Exception as e:
+            st.warning(f"No se pudo restaurar el backup (seguís con base vacía): {e}")
 
 # === Backup/Restore a GitHub (snapshot de SQLite) ===
 
@@ -84,23 +117,6 @@ def restore_from_github_snapshot():
         raise RuntimeError(f"Backup descargado inválido: {e}")
 
     return True
-
-def restore_on_boot_once():
-    """
-    Si la DB no existe o está 'vacía', intenta restaurar una vez al arrancar.
-    Marcamos en session_state para no hacerlo en cada rerun.
-    """
-    if st.session_state.get("_did_boot_restore"):
-        return
-    st.session_state["_did_boot_restore"] = True
-
-    # Si no existe o pesa muy poco, intentamos restaurar.
-    if (not os.path.exists(DB_PATH)) or (os.path.getsize(DB_PATH) < 2048):
-        try:
-            restore_from_github_snapshot()
-            st.toast("Base restaurada desde GitHub ✅")
-        except Exception as e:
-            st.warning(f"No se pudo restaurar el backup (seguís con base vacía): {e}")
 
 # =========================
 # DB Helpers & Migrations
@@ -701,6 +717,12 @@ if is_admin_user:
         with colv2:
             if st.button("Agregar vendedor"):
                 ok, msg = add_vendor(nuevo_vend)
+                try:
+                    url = backup_snapshot_to_github()
+                    st.success("Backup subido a GitHub ✅")
+                    if url: st.markdown(f"[Ver commit →]({url})")
+                except Exception as e:
+                    st.error(f"Falló el backup: {e}")
                 (st.success if ok else st.error)(msg)
                 if ok: st.rerun()
 
@@ -791,6 +813,64 @@ if is_admin_user:
                             st.success("Volvé a iniciar sesión con el nuevo usuario.")
                             st.session_state.clear()
                             st.rerun()
+        # === Diagnóstico y prueba de Backup a GitHub ===
+            import base64, requests
+            from datetime import datetime, timezone
+
+            st.markdown("### 🔎 Diagnóstico Backup a GitHub")
+            c1, c2 = st.columns(2)
+
+            with c1:
+                if st.button("Probar backup ahora (archivo de prueba)"):
+                    try:
+                        # 1) Chequear secrets básicos
+                        faltan = [k for k in ("GH_TOKEN","GH_REPO") if k not in st.secrets]
+                        if faltan:
+                            st.error("Faltan estos Secrets: " + ", ".join(faltan))
+                        else:
+                            st.success("Secrets OK")
+
+                        # 2) Chequear acceso al repo
+                        repo = st.secrets["GH_REPO"]
+                        branch = st.secrets.get("GH_BRANCH", "main")
+                        headers = {"Authorization": f"Bearer {st.secrets['GH_TOKEN']}",
+                                "Accept": "application/vnd.github+json"}
+
+                        r_repo = requests.get(f"https://api.github.com/repos/{repo}", headers=headers, timeout=20)
+                        if r_repo.status_code != 200:
+                            st.error(f"Repo no accesible: {r_repo.status_code} — {r_repo.text[:160]}")
+                        else:
+                            st.success("Acceso al repo OK")
+
+                        # 3) Escribir archivo de prueba
+                        ts = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+                        path = f"data/_probe_{ts}.txt"
+                        url  = f"https://api.github.com/repos/{repo}/contents/{path}"
+                        payload = {
+                            "message": f"probe {ts}",
+                            "content": base64.b64encode(f"ok {ts}".encode()).decode(),
+                            "branch": branch
+                        }
+                        r_put = requests.put(url, headers=headers, json=payload, timeout=30)
+                        if r_put.status_code in (200, 201):
+                            html = r_put.json()["content"]["html_url"]
+                            st.success(f"Escritura OK → {html}")
+                        else:
+                            st.error(f"PUT falló: {r_put.status_code} — {r_put.text[:300]}")
+
+                    except Exception as e:
+                        st.exception(e)
+
+            with c2:
+                if st.button("Forzar backup real (snapshot.json + CSVs)"):
+                    try:
+                        urls = backup_snapshot_to_github()
+                        st.success("Backup subido a GitHub ✅")
+                        for nombre, link in (urls or {}).items():
+                            st.write(f"• {nombre}: {link}")
+                    except Exception as e:
+                        st.error(f"No se pudo subir el backup: {e}")
+
 
 
 # --------- CREAR / EDITAR VENTA (solo admin crea) ---------

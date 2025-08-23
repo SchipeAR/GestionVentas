@@ -849,6 +849,60 @@ def render_backup_restore_diag():
                 except Exception as e:
                     st.error(f"Error: {e}")
 
+def backup_snapshot_to_github():
+    """Sube snapshot + CSVs con TODO (sin filtros) y evita subir vacío si hay datos locales."""
+    df_ops, df_iv, df_ic = _snapshot_dataframes_all()
+    local_cnt = _local_ops_count()
+
+    # 🚫 Guardrail: no subir vacío si hay datos locales
+    if local_cnt > 0 and (df_ops is None or df_ops.empty):
+        raise RuntimeError("Backup abortado: snapshot vacío detectado aunque la DB local tiene datos.")
+
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    commit_msg = f"backup: snapshot {ts}"
+
+    # JSON con todo
+    json_blob = {
+        "generated_at": ts,
+        "operations": (df_ops.to_dict(orient="records") if df_ops is not None else []),
+        "installments_venta": (df_iv.to_dict(orient="records") if df_iv is not None else []),
+        "installments_compra": (df_ic.to_dict(orient="records") if df_ic is not None else []),
+    }
+    json_bytes = json.dumps(json_blob, ensure_ascii=False, indent=2).encode("utf-8")
+
+    urls = {}
+    urls["snapshot.json"] = gh_upsert_file("data/snapshot.json", json_bytes, commit_msg)
+    # CSV crudos
+    urls["operations.csv"]          = gh_upsert_file("data/operations.csv", df_ops.to_csv(index=False).encode("utf-8"), commit_msg) if df_ops is not None else None
+    urls["installments_venta.csv"]  = gh_upsert_file("data/installments_venta.csv", df_iv.to_csv(index=False).encode("utf-8"), commit_msg) if df_iv is not None else None
+    urls["installments_compra.csv"] = gh_upsert_file("data/installments_compra.csv", df_ic.to_csv(index=False).encode("utf-8"), commit_msg) if df_ic is not None else None
+
+    # (opcional) si exportás también los listados “Cuotas (2+) / Un pago (1)” para Sheets, rehacelos SIN scope:
+    try:
+        df_multi, df_uno = _build_listado_dataframes_for_export_all()
+        urls["listado_multi.csv"] = gh_upsert_file("data/listado_multi.csv", df_multi.to_csv(index=False).encode("utf-8"), commit_msg)
+        urls["listado_uno.csv"]   = gh_upsert_file("data/listado_uno.csv",   df_uno.to_csv(index=False).encode("utf-8"), commit_msg)
+    except Exception:
+        pass
+
+    return urls
+
+
+def backup_zip_bytes():
+    """Por si querés un ZIP descargable además (opcional)."""
+    df_ops, df_iv, df_ic = _snapshot_dataframes_all()
+    mem = io.BytesIO()
+    with zipfile.ZipFile(mem, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("operations.csv", df_ops.to_csv(index=False))
+        zf.writestr("installments_venta.csv", df_iv.to_csv(index=False))
+        zf.writestr("installments_compra.csv", df_ic.to_csv(index=False))
+    mem.seek(0)
+    return mem.getvalue()
+
+
+# ========= /BACKUP A GITHUB =========
+
+
 # (opcional) alias si tu código usa is_admin_user() en vez de is_admin()
 def is_admin_user():
     try:
@@ -1035,7 +1089,7 @@ if is_admin_flag:
                             st.session_state.clear()
                             st.rerun()
         # === Diagnóstico de backups (solo admin) ===
-            with st.expander("🩺 Backup/Restore — diagnóstico"):
+        with st.expander("🩺 Backup/Restore — diagnóstico"):
                 colA, colB = st.columns(2)
                 with colA:
                     st.write("Operaciones locales:", _local_ops_count())
@@ -2253,59 +2307,4 @@ def restore_db_from_github_snapshot():
 # >>> Actualiza tu backup para subir también los listados:
 from datetime import datetime, timezone
 import json
-
-def backup_snapshot_to_github():
-    """Sube snapshot + CSVs con TODO (sin filtros) y evita subir vacío si hay datos locales."""
-    df_ops, df_iv, df_ic = _snapshot_dataframes_all()
-    local_cnt = _local_ops_count()
-
-    # 🚫 Guardrail: no subir vacío si hay datos locales
-    if local_cnt > 0 and (df_ops is None or df_ops.empty):
-        raise RuntimeError("Backup abortado: snapshot vacío detectado aunque la DB local tiene datos.")
-
-    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    commit_msg = f"backup: snapshot {ts}"
-
-    # JSON con todo
-    json_blob = {
-        "generated_at": ts,
-        "operations": (df_ops.to_dict(orient="records") if df_ops is not None else []),
-        "installments_venta": (df_iv.to_dict(orient="records") if df_iv is not None else []),
-        "installments_compra": (df_ic.to_dict(orient="records") if df_ic is not None else []),
-    }
-    json_bytes = json.dumps(json_blob, ensure_ascii=False, indent=2).encode("utf-8")
-
-    urls = {}
-    urls["snapshot.json"] = gh_upsert_file("data/snapshot.json", json_bytes, commit_msg)
-    # CSV crudos
-    urls["operations.csv"]          = gh_upsert_file("data/operations.csv", df_ops.to_csv(index=False).encode("utf-8"), commit_msg) if df_ops is not None else None
-    urls["installments_venta.csv"]  = gh_upsert_file("data/installments_venta.csv", df_iv.to_csv(index=False).encode("utf-8"), commit_msg) if df_iv is not None else None
-    urls["installments_compra.csv"] = gh_upsert_file("data/installments_compra.csv", df_ic.to_csv(index=False).encode("utf-8"), commit_msg) if df_ic is not None else None
-
-    # (opcional) si exportás también los listados “Cuotas (2+) / Un pago (1)” para Sheets, rehacelos SIN scope:
-    try:
-        df_multi, df_uno = _build_listado_dataframes_for_export_all()
-        urls["listado_multi.csv"] = gh_upsert_file("data/listado_multi.csv", df_multi.to_csv(index=False).encode("utf-8"), commit_msg)
-        urls["listado_uno.csv"]   = gh_upsert_file("data/listado_uno.csv",   df_uno.to_csv(index=False).encode("utf-8"), commit_msg)
-    except Exception:
-        pass
-
-    return urls
-
-
-
-def backup_zip_bytes():
-    """Por si querés un ZIP descargable además (opcional)."""
-    df_ops, df_iv, df_ic = _snapshot_dataframes_all()
-    mem = io.BytesIO()
-    with zipfile.ZipFile(mem, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
-        zf.writestr("operations.csv", df_ops.to_csv(index=False))
-        zf.writestr("installments_venta.csv", df_iv.to_csv(index=False))
-        zf.writestr("installments_compra.csv", df_ic.to_csv(index=False))
-    mem.seek(0)
-    return mem.getvalue()
-
-
-# ========= /BACKUP A GITHUB =========
-
 

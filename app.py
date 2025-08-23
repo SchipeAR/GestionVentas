@@ -96,15 +96,26 @@ def _gh_get_current_sha():
         return None
     raise RuntimeError(f"GitHub GET falló: {r.status_code} — {r.text[:200]}")
 
+def _gh_get_current_bytes_or_none():
+    """Trae bytes del archivo actual en GitHub para comparar (si es pequeño)."""
+    url, branch = _gh_cfg()
+    r = requests.get(url, headers=_gh_headers(), params={"ref": branch}, timeout=30)
+    if r.status_code == 200:
+        j = r.json()
+        b64 = j.get("content")
+        if b64 and j.get("encoding") == "base64":
+            return base64.b64decode(b64)
+        return None
+    if r.status_code == 404:
+        return None
+    raise RuntimeError(f"GitHub GET falló: {r.status_code} — {r.text[:200]}")
+
 def backup_snapshot_to_github():
-    """Sube ventas.db a GH_PATH. Si ya existe, lo actualiza. Evita commits vacíos."""
     if not os.path.exists(DB_PATH):
         raise RuntimeError("No existe la base local para respaldar.")
 
-    # Consistente (incluye lo del WAL)
     data = _sqlite_consistent_bytes(DB_PATH)
 
-    # Si el contenido en GitHub es igual, no comiteamos de gusto
     current = _gh_get_current_bytes_or_none()
     if current is not None and _sha256_bytes(current) == _sha256_bytes(data):
         return "Sin cambios: el backup es idéntico al último en GitHub."

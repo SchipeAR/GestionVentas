@@ -433,58 +433,107 @@ def get_conn():
     con.execute("PRAGMA synchronous=NORMAL;")
     return con
 
-# ==== Helpers para detectar ventas con 0 cuotas ====
+# ==== Helpers robustos para detectar ventas con 0 cuotas ====
 def _table_exists(con, name: str) -> bool:
     return con.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
         (name,)
     ).fetchone() is not None
 
+def _cols(con, table: str):
+    return {row[1].lower() for row in con.execute(f"PRAGMA table_info({table})")}
+
+def _pick(cols: set, candidates: list[str]) -> str | None:
+    for c in candidates:
+        if c and c.lower() in cols:
+            return c
+    return None
+
+def _pick_installments_table_and_fk(con):
+    """Elige la tabla de cuotas y su columna FK hacia operations.id."""
+    for tbl in ["installments_venta", "installments", "cuotas"]:
+        if _table_exists(con, tbl):
+            icols = _cols(con, tbl)
+            fk = _pick(icols, ["op_id", "operation_id", "venta_id", "id_venta", "op"])
+            if fk:
+                return tbl, fk
+    return None, None
+
 def get_ops_zero_cuotas():
     """
-    Devuelve ventas que NO tienen ninguna cuota registrada, por eso 'no aparecen'.
+    Devuelve ventas que no tienen NINGUNA cuota (por eso no aparecen en listados).
+    Se adapta al esquema real de la base.
     """
     with get_conn() as con:
-        # Detectar tabla de cuotas de VENTA
-        if _table_exists(con, "installments_venta"):
-            inst_tbl = "installments_venta"
-        else:
-            # Si tu esquema usa otro nombre, ponelo acá:
-            inst_tbl = None
+        if not _table_exists(con, "operations"):
+            return []
 
-        if inst_tbl:
-            q = f"""
-                SELECT
-                    o.id,
-                    COALESCE(o.descripcion, o.desc, '') AS descripcion,
-                    COALESCE(o.zona, o.vendedor, '')   AS vendedor,
-                    COALESCE(o.fecha, '')               AS fecha
-                FROM operations o
-                LEFT JOIN {inst_tbl} iv ON iv.op_id = o.id
-                GROUP BY o.id
-                HAVING COALESCE(COUNT(iv.op_id), 0) = 0
-                ORDER BY o.id DESC
-            """
-        else:
-            # Fallback: si no existe la tabla de cuotas, filtramos por columna 'cuotas' en operations
-            q = """
-                SELECT
-                    o.id,
-                    COALESCE(o.descripcion, o.desc, '') AS descripcion,
-                    COALESCE(o.zona, o.vendedor, '')   AS vendedor,
-                    COALESCE(o.fecha, '')               AS fecha
-                FROM operations o
-                WHERE COALESCE(o.cuotas, 0) = 0
-                ORDER BY o.id DESC
-            """
+        ocols = _cols(con, "operations")
 
-        rows = con.execute(q).fetchall()
-        # Formateo a dicts simples
-        return [
-            {"id": r[0], "descripcion": r[1], "vendedor": r[2], "fecha": r[3]}
-            for r in rows
-        ]
+        # Columnas opcionales (solo se usan si existen)
+        desc_col  = _pick(ocols, ["descripcion", "desc", "detalle", "concepto"])
+        vend_col  = _pick(ocols, ["zona", "vendedor", "seller"])
+        fecha_col = _pick(ocols, ["fecha", "date", "created_at"])
+        cuotas_col = _pick(ocols, ["cuotas", "cuotas_totales"])
 
+        # SELECT adaptable (si no existe, mandamos string vacío)
+        sel_desc  = f", o.{desc_col} AS descripcion" if desc_col  else ", '' AS descripcion"
+        sel_vend  = f", o.{vend_col} AS vendedor"    if vend_col  else ", '' AS vendedor"
+        sel_fecha = f", o.{fecha_col} AS fecha"      if fecha_col else ", '' AS fecha"
+
+        inst_tbl, inst_fk = _pick_installments_table_and_fk(con)
+
+        try:
+            if inst_tbl and inst_fk:
+                q = f"""
+                    SELECT o.id {sel_desc} {sel_vend} {sel_fecha}
+                    FROM operations o
+                    LEFT JOIN {inst_tbl} iv ON iv.{inst_fk} = o.id
+                    GROUP BY o.id
+                    HAVING COALESCE(COUNT(iv.{inst_fk}), 0) = 0
+                    ORDER BY o.id DESC
+                """
+            elif cuotas_col:
+                q = f"""
+                    SELECT o.id {sel_desc} {sel_vend} {sel_fecha}
+                    FROM operations o
+                    WHERE COALESCE(o.{cuotas_col}, 0) = 0
+                    ORDER BY o.id DESC
+                """
+            else:
+                # No hay forma clara de saber cuotas → devolvemos vacío
+                return []
+
+            rows = con.execute(q).fetchall()
+        except Exception:
+            # Fallback ultra simple por si igual falla: NO referenciar columnas opcionales
+            rows = []
+            try:
+                if inst_tbl and inst_fk:
+                    q2 = f"""
+                        SELECT o.id FROM operations o
+                        LEFT JOIN {inst_tbl} iv ON iv.{inst_fk} = o.id
+                        GROUP BY o.id
+                        HAVING COALESCE(COUNT(iv.{inst_fk}), 0) = 0
+                        ORDER BY o.id DESC
+                    """
+                    rows = [(r[0], "", "", "") for r in con.execute(q2).fetchall()]
+                elif cuotas_col:
+                    q2 = f"SELECT id FROM operations WHERE COALESCE({cuotas_col},0)=0 ORDER BY id DESC"
+                    rows = [(r[0], "", "", "") for r in con.execute(q2).fetchall()]
+            except Exception:
+                rows = []
+
+        # Normalizamos a dicts
+        out = []
+        for r in rows:
+            # r puede venir con sólo id; completamos strings vacíos
+            rid   = r[0]
+            desc  = r[1] if len(r) > 1 else ""
+            vend  = r[2] if len(r) > 2 else ""
+            fecha = r[3] if len(r) > 3 else ""
+            out.append({"id": rid, "descripcion": str(desc or ""), "vendedor": str(vend or ""), "fecha": str(fecha or "")})
+        return out
 
 def init_db():
     with get_conn() as con:

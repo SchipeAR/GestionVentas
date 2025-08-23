@@ -171,10 +171,10 @@ def restore_from_github_snapshot():
 if "export_logs" not in st.session_state:
     st.session_state.export_logs = []
 
-def _log(msg):
+def _log(msg: str):
     ts = time.strftime("%H:%M:%S")
     st.session_state.export_logs.append(f"[{ts}] {msg}")
-    st.write(msg)  # también lo muestra en vivo
+    st.write(msg)
 
 def _ping_webapp():
     url   = st.secrets.get("GS_WEBAPP_URL", "")
@@ -823,36 +823,6 @@ if is_admin_user:
 
     with tab_admin:
         st.subheader("👤 Administración")
-        st.markdown("### 💾 Backup & Restore (GitHub)")
-        c1, c2 = st.columns(2)
-        with c1:
-            if st.button("💾 Guardar backup ahora"):
-                try:
-                    url = backup_snapshot_to_github()
-                    st.success("Backup subido a GitHub ✅")
-                    if url: st.markdown(f"[Ver commit →]({url})")
-                except Exception as e:
-                    st.error(f"Falló el backup: {e}")
-        with c2:
-            if st.button("♻️ Restaurar último backup"):
-                try:
-                    restore_from_github_snapshot()
-                    st.success("Restaurado desde GitHub ✅")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"No se pudo restaurar: {e}")
-        st.markdown("### 📤 Exportar a Google Sheets (ahora mismo)")
-        with st.expander("🔍 Logs de exportación (persisten en la sesión)"):
-            for line in st.session_state.export_logs[-200:]:  # últimas 200 líneas
-                st.text(line)
-        if is_admin():
-            if st.button("Probar conexión"):
-                _ping_webapp()
-            if st.button("Exportar ahora (Web App)"):
-                if st.button("Exportar a Google Sheets"):
-                    exportar_a_sheets_webapp_desde_sqlite(DB_PATH)  # usa tu ruta DB_PATH
-        else:
-            st.info("Solo un administrador puede exportar a Google Sheets.")
         # --- Vendedores (maestro)
         st.markdown("### 📇 Vendedores")
         colv1, colv2 = st.columns([2,1])
@@ -880,10 +850,43 @@ if is_admin_user:
                     if cols[2].button("Desactivar", key=f"deact_v_{v['id']}"):
                         deactivate_vendor(v["id"])
                         st.rerun()
+        st.markdown("### 💾 Backup & Restore (GitHub)")
+        c1, c2 = st.columns(2)
+        with c1:
+            if st.button("💾 Guardar backup ahora"):
+                try:
+                    url = backup_snapshot_to_github()
+                    st.success("Backup subido a GitHub ✅")
+                    if url: st.markdown(f"[Ver commit →]({url})")
+                except Exception as e:
+                    st.error(f"Falló el backup: {e}")
+        with c2:
+            if st.button("♻️ Restaurar último backup"):
+                try:
+                    restore_from_github_snapshot()
+                    st.success("Restaurado desde GitHub ✅")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"No se pudo restaurar: {e}")
+        st.markdown("### 📤 Exportar a Google Sheets")
+        if is_admin():
+            c1, c2, c3 = st.columns([1,1,1])
+            if c1.button("Probar conexión"):
+                _ping_webapp()
+            if c2.button("Exportar ahora"):
+                exportar_a_sheets_webapp_desde_sqlite(DB_PATH)  # usa tu DB_PATH = "ventas.db"
+            if c3.button("🧹 Limpiar logs"):
+                st.session_state.export_logs.clear()
+                st.info("Logs limpiados.")
+        else:
+            st.info("Solo un administrador puede exportar a Google Sheets.")
+
+        with st.expander("🔍 Logs de exportación (persisten en la sesión)"):
+            for line in st.session_state.export_logs[-200:]:
+                st.text(line)
 
 
-
-        st.divider()
+                st.divider()
 
         # --- Usuarios vendedores
         st.markdown("### 👥 Usuarios (vendedores)")

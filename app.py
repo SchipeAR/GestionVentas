@@ -968,7 +968,6 @@ if is_admin_user:
         st.subheader("👤 Administración")
         with card("Vendedores", "🧑‍💼"):
             # --- Vendedores (maestro)
-            st.markdown("### 📇 Vendedores")
             colv1, colv2 = st.columns([2,1])
             with colv1:
                 nuevo_vend = st.text_input("Nombre del vendedor (tal cual querés que figure en las ventas)")

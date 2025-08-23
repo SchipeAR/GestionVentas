@@ -991,7 +991,6 @@ if is_admin_user:
 
 
     with tab_admin:
-        st.subheader("👤 Administración")
         with card("Vendedores", "🧑‍💼"):
             # --- Vendedores (maestro)
             colv1, colv2 = st.columns([2,1])

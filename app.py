@@ -16,6 +16,9 @@ st.set_page_config(page_title="Gestión Ventas 2025 (Ventas + Compras)", layout=
 
 DB_PATH = "ventas.db"
 
+def _sha256_bytes(b: bytes) -> str:
+    h = hashlib.sha256(); h.update(b); return h.hexdigest()
+
 def _sqlite_consistent_bytes(db_path: str) -> bytes:
     """
     Devuelve el contenido de la DB en bytes, consistente,

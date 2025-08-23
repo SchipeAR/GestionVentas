@@ -983,7 +983,8 @@ if is_admin_user:
                         st.error(f"Falló el backup: {e}")
                     (st.success if ok else st.error)(msg)
                     if ok: st.rerun()
-        
+         
+            st.markdown("<hr style='border:0; border-top:1px solid #1f2937; margin:10px 0'>", unsafe_allow_html=True)
 
             vendors_all = list_vendors(active_only=False)
             if vendors_all:

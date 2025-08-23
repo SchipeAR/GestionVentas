@@ -135,6 +135,22 @@ def load_css():
 # ¡Llamalo!
 load_css()
 
+# ⇩⇩ Pegar debajo de load_css() ⇩⇩
+st.markdown("""
+<style>
+  .hero{ padding:22px 24px; }
+  /* Título grande y responsivo */
+  .hero .title{
+    font-size: clamp(1.9rem, 2.6vw + 0.6rem, 2.6rem);
+    line-height: 1.12;
+    letter-spacing: .2px;
+  }
+  /* Subtítulo un poco más legible */
+  .hero .subtitle{ font-size: 1rem; opacity: .9; }
+</style>
+""", unsafe_allow_html=True)
+
+
 from contextlib import contextmanager
 
 st.markdown(

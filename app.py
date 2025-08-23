@@ -50,7 +50,7 @@ def restore_on_boot_once():
 def _gh_cfg():
     repo   = st.secrets["GH_REPO"]
     branch = st.secrets.get("GH_BRANCH", "main")
-    path   = st.secrets.get("GH_PATH", "data/ventas.db")
+    path   = st.secrets.get("GH_PATH", "ventas.db")
     url    = f"https://api.github.com/repos/{repo}/contents/{path}"
     return url, branch
 

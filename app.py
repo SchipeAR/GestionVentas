@@ -943,8 +943,6 @@ with st.sidebar:
         st.session_state.clear()
         st.rerun()
 
-st.title("Gestión Ventas 2025 — Ventas + Compras (inversor)")
-
 # =========================
 # Tabs según rol
 # =========================

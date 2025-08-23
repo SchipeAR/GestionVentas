@@ -973,6 +973,33 @@ if is_admin_flag:
 
     with tab_admin:
         render_backup_restore_diag()
+        st.markdown("### 💾 Guardar backup")
+        c1, c2 = st.columns([1,1])
+
+        with c1:
+            if st.button("💾 Guardar backup ahora", type="primary", use_container_width=True):
+                try:
+                    urls = backup_snapshot_to_github()  # sube snapshot.json + CSVs a GitHub
+                    st.success("Backup subido a GitHub ✅")
+                    for k, v in urls.items():
+                        if v:
+                            st.write(f"- {k}: {v}")
+                except Exception as e:
+                    st.error(f"Error al guardar backup: {e}")
+
+        with c2:
+            try:
+                zbytes = backup_zip_bytes()  # crea ZIP local con operations & installments
+                st.download_button(
+                    "⬇️ Descargar ZIP de backup",
+                    data=zbytes,
+                    file_name="backup.zip",
+                    mime="application/zip",
+                    use_container_width=True
+                )
+            except Exception as e:
+                st.warning(f"No se pudo generar el ZIP: {e}")
+
         st.markdown("### ♻️ Restaurar base desde GitHub (snapshot)")
         if st.button("Restaurar ahora", key="btn_restore_now"):
             try:

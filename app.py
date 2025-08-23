@@ -1046,24 +1046,7 @@ if is_admin_user:
                         st.warning(f"Desactivado. Falló el backup: {e}")
                     st.rerun()
 
-            st.markdown("### 💾 Backup & Restore (GitHub)")
-            c1, c2 = st.columns(2)
-            with c1:
-                if st.button("💾 Guardar backup ahora"):
-                    try:
-                        url = backup_snapshot_to_github()
-                        st.success("Backup subido a GitHub ✅")
-                        if url: st.markdown(f"[Ver commit →]({url})")
-                    except Exception as e:
-                        st.error(f"Falló el backup: {e}")
-            with c2:
-                if st.button("♻️ Restaurar último backup"):
-                    try:
-                        restore_from_github_snapshot()
-                        st.success("Restaurado desde GitHub ✅")
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"No se pudo restaurar: {e}")
+            
             st.markdown("### 📤 Exportar a Google Sheets")
             if is_admin():
                 c1, c2, c3 = st.columns([1,1,1])
@@ -1159,6 +1142,24 @@ if is_admin_user:
                             st.session_state.clear()
                             st.rerun()
         with card("Backup & Restore (GitHub)", "💽"):
+            st.markdown("### 💾 Backup & Restore (GitHub)")
+            c1, c2 = st.columns(2)
+            with c1:
+                if st.button("💾 Guardar backup ahora"):
+                    try:
+                        url = backup_snapshot_to_github()
+                        st.success("Backup subido a GitHub ✅")
+                        if url: st.markdown(f"[Ver commit →]({url})")
+                    except Exception as e:
+                        st.error(f"Falló el backup: {e}")
+            with c2:
+                if st.button("♻️ Restaurar último backup"):
+                    try:
+                        restore_from_github_snapshot()
+                        st.success("Restaurado desde GitHub ✅")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"No se pudo restaurar: {e}")
         # === Diagnóstico y prueba de Backup a GitHub ===
             import base64, requests
             from datetime import datetime, timezone

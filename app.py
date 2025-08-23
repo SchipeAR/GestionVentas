@@ -821,6 +821,34 @@ def restore_db_from_github_snapshot():
 
     return True
 
+def render_backup_restore_diag():
+    with st.expander("🩺 Backup/Restore — diagnóstico", expanded=False):
+        st.write("RESTORE_POLICY:", st.secrets.get("RESTORE_POLICY", "auto"))
+        try:
+            snap = gh_fetch_json("data/snapshot.json")
+            st.write("Snapshot generated_at:", snap.get("generated_at"))
+            st.write("Snapshot operaciones:", len(snap.get("operations", []) or []))
+        except Exception as e:
+            st.error(f"No pude leer snapshot: {e}")
+        st.write("Operaciones locales:", _local_ops_count())
+
+        c1, c2 = st.columns(2)
+        with c1:
+            if st.button("🛠 Reconstruir snapshot completo (ignorar filtros)"):
+                try:
+                    backup_snapshot_to_github()
+                    st.success("Snapshot reconstruido y subido ✅")
+                except Exception as e:
+                    st.error(f"Error: {e}")
+        with c2:
+            if st.button("Forzar restauración ahora"):
+                try:
+                    restore_db_from_github_snapshot()
+                    st.success("Restaurado ✅")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error: {e}")
+
 # (opcional) alias si tu código usa is_admin_user() en vez de is_admin()
 def is_admin_user():
     try:
@@ -1006,7 +1034,37 @@ if is_admin_flag:
                             st.success("Volvé a iniciar sesión con el nuevo usuario.")
                             st.session_state.clear()
                             st.rerun()
-        
+        # === Diagnóstico de backups (solo admin) ===
+            with st.expander("🩺 Backup/Restore — diagnóstico"):
+                colA, colB = st.columns(2)
+                with colA:
+                    st.write("Operaciones locales:", _local_ops_count())
+                    try:
+                        snap = gh_fetch_json("data/snapshot.json")
+                        st.write("Snapshot generated_at:", snap.get("generated_at"))
+                        st.write("Snapshot operaciones:", len(snap.get("operations", []) or []))
+                    except Exception as e:
+                        st.error(f"No pude leer snapshot de GitHub: {e}")
+
+                    if st.button("🛠 Reconstruir snapshot completo (ignorar filtros)"):
+                        try:
+                            urls = backup_snapshot_to_github()
+                            st.success("Snapshot reconstruido y subido ✅")
+                            for k, v in urls.items():
+                                if v: st.write(f"- {k}: {v}")
+                        except Exception as e:
+                            st.error(f"Error al reconstruir snapshot: {e}")
+
+                with colB:
+                    if st.button("🔎 Probar escritura simple (healthcheck)"):
+                        try:
+                            from datetime import datetime, timezone
+                            u = gh_upsert_file("data/_healthcheck.txt", f"ok {datetime.now(timezone.utc)}\n".encode("utf-8"), "healthcheck")
+                            st.success("Escritura OK")
+                            st.write(u)
+                        except Exception as e:
+                            st.error(f"Falló: {e}")
+                
 
 
 # --------- CREAR / EDITAR VENTA (solo admin crea) ---------
@@ -2247,64 +2305,7 @@ def backup_zip_bytes():
     mem.seek(0)
     return mem.getvalue()
 
-def render_backup_restore_diag():
-    with st.expander("🩺 Backup/Restore — diagnóstico", expanded=False):
-        st.write("RESTORE_POLICY:", st.secrets.get("RESTORE_POLICY", "auto"))
-        try:
-            snap = gh_fetch_json("data/snapshot.json")
-            st.write("Snapshot generated_at:", snap.get("generated_at"))
-            st.write("Snapshot operaciones:", len(snap.get("operations", []) or []))
-        except Exception as e:
-            st.error(f"No pude leer snapshot: {e}")
-        st.write("Operaciones locales:", _local_ops_count())
-
-        c1, c2 = st.columns(2)
-        with c1:
-            if st.button("🛠 Reconstruir snapshot completo (ignorar filtros)"):
-                try:
-                    backup_snapshot_to_github()
-                    st.success("Snapshot reconstruido y subido ✅")
-                except Exception as e:
-                    st.error(f"Error: {e}")
-        with c2:
-            if st.button("Forzar restauración ahora"):
-                try:
-                    restore_db_from_github_snapshot()
-                    st.success("Restaurado ✅")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Error: {e}")
 
 # ========= /BACKUP A GITHUB =========
-# === Diagnóstico de backups (solo admin) ===
-if is_admin():
-    with st.expander("🩺 Backup/Restore — diagnóstico"):
-        colA, colB = st.columns(2)
-        with colA:
-            st.write("Operaciones locales:", _local_ops_count())
-            try:
-                snap = gh_fetch_json("data/snapshot.json")
-                st.write("Snapshot generated_at:", snap.get("generated_at"))
-                st.write("Snapshot operaciones:", len(snap.get("operations", []) or []))
-            except Exception as e:
-                st.error(f"No pude leer snapshot de GitHub: {e}")
 
-            if st.button("🛠 Reconstruir snapshot completo (ignorar filtros)"):
-                try:
-                    urls = backup_snapshot_to_github()
-                    st.success("Snapshot reconstruido y subido ✅")
-                    for k, v in urls.items():
-                        if v: st.write(f"- {k}: {v}")
-                except Exception as e:
-                    st.error(f"Error al reconstruir snapshot: {e}")
-
-        with colB:
-            if st.button("🔎 Probar escritura simple (healthcheck)"):
-                try:
-                    from datetime import datetime, timezone
-                    u = gh_upsert_file("data/_healthcheck.txt", f"ok {datetime.now(timezone.utc)}\n".encode("utf-8"), "healthcheck")
-                    st.success("Escritura OK")
-                    st.write(u)
-                except Exception as e:
-                    st.error(f"Falló: {e}")
 

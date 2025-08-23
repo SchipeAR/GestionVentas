@@ -1008,7 +1008,7 @@ if is_admin_user:
                             except Exception as e:
                                 st.warning(f"Vendedor eliminado. Falló el backup: {e}")
                             st.rerun()
-             st.markdown("<hr style='border:0; border-top:1px solid #1f2937; margin:10px 0'>", unsafe_allow_html=True)   
+            st.markdown("<hr style='border:0; border-top:1px solid #1f2937; margin:10px 0'>", unsafe_allow_html=True)   
 
             # 🚫 Desactivar (como ya tenías)
             if v.get('activo',1)==1:

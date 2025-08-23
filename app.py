@@ -433,6 +433,59 @@ def get_conn():
     con.execute("PRAGMA synchronous=NORMAL;")
     return con
 
+# ==== Helpers para detectar ventas con 0 cuotas ====
+def _table_exists(con, name: str) -> bool:
+    return con.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+        (name,)
+    ).fetchone() is not None
+
+def get_ops_zero_cuotas():
+    """
+    Devuelve ventas que NO tienen ninguna cuota registrada, por eso 'no aparecen'.
+    """
+    with get_conn() as con:
+        # Detectar tabla de cuotas de VENTA
+        if _table_exists(con, "installments_venta"):
+            inst_tbl = "installments_venta"
+        else:
+            # Si tu esquema usa otro nombre, ponelo acá:
+            inst_tbl = None
+
+        if inst_tbl:
+            q = f"""
+                SELECT
+                    o.id,
+                    COALESCE(o.descripcion, o.desc, '') AS descripcion,
+                    COALESCE(o.zona, o.vendedor, '')   AS vendedor,
+                    COALESCE(o.fecha, '')               AS fecha
+                FROM operations o
+                LEFT JOIN {inst_tbl} iv ON iv.op_id = o.id
+                GROUP BY o.id
+                HAVING COALESCE(COUNT(iv.op_id), 0) = 0
+                ORDER BY o.id DESC
+            """
+        else:
+            # Fallback: si no existe la tabla de cuotas, filtramos por columna 'cuotas' en operations
+            q = """
+                SELECT
+                    o.id,
+                    COALESCE(o.descripcion, o.desc, '') AS descripcion,
+                    COALESCE(o.zona, o.vendedor, '')   AS vendedor,
+                    COALESCE(o.fecha, '')               AS fecha
+                FROM operations o
+                WHERE COALESCE(o.cuotas, 0) = 0
+                ORDER BY o.id DESC
+            """
+
+        rows = con.execute(q).fetchall()
+        # Formateo a dicts simples
+        return [
+            {"id": r[0], "descripcion": r[1], "vendedor": r[2], "fecha": r[3]}
+            for r in rows
+        ]
+
+
 def init_db():
     with get_conn() as con:
         cur = con.cursor()
@@ -1215,6 +1268,29 @@ if is_admin_user:
             with st.expander("🔍 Logs de exportación (persisten en la sesión)"):
                 for line in st.session_state.export_logs[-200:]:
                     st.text(line)
+        with card("Rescate: ventas ocultas (0 cuotas)", "🧰"):
+            ops_zero = get_ops_zero_cuotas()
+            if not ops_zero:
+                st.info("No hay ventas con 0 cuotas. ¡Todo limpio!")
+            else:
+                st.warning("Estas ventas NO tienen cuotas, por eso no aparecen en el listado. Podés eliminarlas desde acá.")
+                for op in ops_zero:
+                    c1, c2, c3, c4 = st.columns([1, 3, 2, 2])
+                    c1.markdown(f"**#{op['id']}**")
+                    c2.markdown(f"{op['descripcion']}  \n<small style='color:#9aa0a6'>Vendedor: {op['vendedor']} — {op['fecha']}</small>", unsafe_allow_html=True)
+                    pwd = c3.text_input("Contraseña", type="password", key=f"pwd_zero_{op['id']}", placeholder="totoborrar")
+                    if c4.button("Eliminar venta", key=f"btn_zero_{op['id']}"):
+                        if pwd != DELETE_SALES_PASSWORD:   # ya la tenés definida como "totoborrar"
+                            st.error("Contraseña incorrecta.")
+                        else:
+                            delete_operation(op["id"])
+                            try:
+                                backup_snapshot_to_github()
+                                st.toast("Backup subido a GitHub ✅")
+                            except Exception as e:
+                                st.warning(f"No se pudo subir el backup: {e}")
+                            st.success(f"Venta #{op['id']} eliminada ✅")
+                            st.rerun()
 
 
 

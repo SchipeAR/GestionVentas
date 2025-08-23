@@ -947,10 +947,11 @@ if is_admin_user:
                     recalc_status_for_operation(new_id)
                     st.success(f"Venta #{new_id} creada correctamente.")
                     try:
-                        urls = backup_snapshot_to_github()
-                        st.toast("Backup subido a GitHub ✅")
+                        url = backup_snapshot_to_github()
+                        st.success("Backup subido a GitHub ✅")
+                        if url: st.markdown(f"[Ver commit →]({url})")
                     except Exception as e:
-                        st.warning(f"No se pudo subir el backup a GitHub: {e}")
+                        st.error(f"Falló el backup: {e}")
                     st.rerun() # vuelve con el formulario limpio
 
 
@@ -1199,13 +1200,14 @@ with tab_listar:
                             if new_paid != old_paid:
                                 set_installment_paid(iid, new_paid, paid_at_iso=(iso_v if new_paid else None))
                         recalc_status_for_operation(op["id"])
-                        # backup (si tenés opción B activa)
-                        try:
-                            urls = backup_snapshot_to_github()
-                            st.toast("Backup subido a GitHub ✅")
-                        except Exception as e:
-                            st.warning(f"No se pudo subir el backup: {e}")
+                        # backup (si tenés opción B activa)                    
                         st.success("Cuotas de VENTA actualizadas.")
+                        try:
+                            url = backup_snapshot_to_github()
+                            st.success("Backup subido a GitHub ✅")
+                            if url: st.markdown(f"[Ver commit →]({url})")
+                        except Exception as e:
+                            st.error(f"Falló el backup: {e}")
                         st.rerun()
 
             # --- Cuotas de COMPRA (pagos al inversor) ---
@@ -1256,12 +1258,13 @@ with tab_listar:
                             if new_paid != old_paid:
                                 set_installment_paid(iid, new_paid, paid_at_iso=(iso_c if new_paid else None))
                         recalc_status_for_operation(op["id"])
-                        try:
-                            urls = backup_snapshot_to_github()
-                            st.toast("Backup subido a GitHub ✅")
-                        except Exception as e:
-                            st.warning(f"No se pudo subir el backup: {e}")
                         st.success("Cuotas de COMPRA actualizadas.")
+                        try:
+                            url = backup_snapshot_to_github()
+                            st.success("Backup subido a GitHub ✅")
+                            if url: st.markdown(f"[Ver commit →]({url})")
+                        except Exception as e:
+                            st.error(f"Falló el backup: {e}")
                         st.rerun()
 
             # --- Editar venta ---
@@ -1316,12 +1319,13 @@ with tab_listar:
                         create_installments(op["id"], distribuir(new_venta, new_cuotas), is_purchase=False)
                         create_installments(op["id"], distribuir(new_price, new_cuotas), is_purchase=True)
                     recalc_status_for_operation(op["id"])
-                    try:
-                        urls = backup_snapshot_to_github()
-                        st.toast("Backup subido a GitHub ✅")
-                    except Exception as e:
-                        st.warning(f"No se pudo subir el backup: {e}")
                     st.success("Venta actualizada y cuotas recalculadas.")
+                    try:
+                        url = backup_snapshot_to_github()
+                        st.success("Backup subido a GitHub ✅")
+                        if url: st.markdown(f"[Ver commit →]({url})")
+                    except Exception as e:
+                        st.error(f"Falló el backup: {e}")
                     st.rerun()
 
             # --- Eliminar venta ---
@@ -1332,12 +1336,13 @@ with tab_listar:
                 if is_admin() and st.button("Eliminar definitivamente", key=f"{key_prefix}_delbtn_{op['id']}"):
                     if confirmar:
                         delete_operation(op["id"])
-                        try:
-                            urls = backup_snapshot_to_github()
-                            st.toast("Backup subido a GitHub ✅")
-                        except Exception as e:
-                            st.warning(f"No se pudo subir el backup: {e}")
                         st.success("Venta eliminada.")
+                        try:
+                            url = backup_snapshot_to_github()
+                            st.success("Backup subido a GitHub ✅")
+                            if url: st.markdown(f"[Ver commit →]({url})")
+                        except Exception as e:
+                            st.error(f"Falló el backup: {e}")
                         st.rerun()
                     else:
                         st.error("Marcá la casilla de confirmación para eliminar.")

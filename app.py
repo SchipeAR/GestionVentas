@@ -984,7 +984,6 @@ if is_admin_user:
                     (st.success if ok else st.error)(msg)
                     if ok: st.rerun()
          
-            st.markdown("<hr style='border:0; border-top:1px solid #1f2937; margin:10px 0'>", unsafe_allow_html=True)
 
             vendors_all = list_vendors(active_only=False)
             if vendors_all:
@@ -1009,6 +1008,7 @@ if is_admin_user:
                             except Exception as e:
                                 st.warning(f"Vendedor eliminado. Falló el backup: {e}")
                             st.rerun()
+             st.markdown("<hr style='border:0; border-top:1px solid #1f2937; margin:10px 0'>", unsafe_allow_html=True)   
 
             # 🚫 Desactivar (como ya tenías)
             if v.get('activo',1)==1:
@@ -1059,7 +1059,7 @@ if is_admin_user:
 
 
                     st.divider()
-
+        st.markdown("<hr style='border:0; border-top:1px solid #1f2937; margin:10px 0'>", unsafe_allow_html=True)
         # --- Usuarios vendedores
         st.markdown("### 👥 Usuarios (vendedores)")
         vend_list = list_vendors(active_only=True)

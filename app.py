@@ -8,6 +8,8 @@ from streamlit.components.v1 import html as st_html
 import base64, json, requests, os
 from passlib.hash import bcrypt as bcrypt_hash
 import os, sqlite3, streamlit as st
+import tempfile
+import hashlib
 
 
 st.set_page_config(page_title="Gestión Ventas 2025 (Ventas + Compras)", layout="wide")

@@ -1079,7 +1079,7 @@ if is_admin_user:
                     ok, msg = create_user(u_username, u_password, role="seller", vendedor_nombre=u_vendedor)
                     (st.success if ok else st.error)(msg)
                     if ok: st.rerun()
-        st.markdown("<hr style='border:0; border-top:1px solid #1f2937; margin:10px 0'>", unsafe_allow_html=True)
+        
         # Listado rápido de usuarios
         with get_conn() as con:
             cur = con.cursor()

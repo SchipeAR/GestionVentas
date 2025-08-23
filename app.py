@@ -5,17 +5,118 @@ import pandas as pd
 from calendar import monthrange
 import os
 from streamlit.components.v1 import html as st_html
-import base64, json, requests
-import io, zipfile
-import json
-
-
-# ====== hashing de contraseñas ======
+import base64, json, requests, os
 from passlib.hash import bcrypt as bcrypt_hash
+import os, sqlite3, streamlit as st
+
 
 st.set_page_config(page_title="Gestión Ventas 2025 (Ventas + Compras)", layout="wide")
 
 DB_PATH = "ventas.db"
+
+def _db_is_empty(path: str) -> bool:
+    # No existe, muy chica o sin tablas => la consideramos "vacía"
+    if (not os.path.exists(path)) or (os.path.getsize(path) < 2048):
+        return True
+    try:
+        with sqlite3.connect(path) as con:
+            cnt = con.execute(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table'"
+            ).fetchone()[0]
+        return (cnt or 0) == 0
+    except Exception:
+        return True
+
+def restore_on_boot_once():
+    """
+    Se ejecuta una sola vez por sesión.
+    Si la DB está vacía, intenta restaurar desde GitHub y hace rerun.
+    Requiere que ya exista restore_from_github_snapshot().
+    """
+    if st.session_state.get("_did_boot_restore"):
+        return
+    st.session_state["_did_boot_restore"] = True
+
+    if _db_is_empty(DB_PATH):
+        try:
+            restore_from_github_snapshot()   # <- usa tu función de restore a GH
+            st.toast("Base restaurada desde GitHub ✅")
+            st.rerun()  # recarga la UI ya con datos
+        except Exception as e:
+            st.warning(f"No se pudo restaurar el backup (seguís con base vacía): {e}")
+
+# === Backup/Restore a GitHub (snapshot de SQLite) ===
+
+def _gh_cfg():
+    repo   = st.secrets["GH_REPO"]
+    branch = st.secrets.get("GH_BRANCH", "main")
+    path   = st.secrets.get("GH_PATH", "data/ventas.db")
+    url    = f"https://api.github.com/repos/{repo}/contents/{path}"
+    return url, branch
+
+def _gh_headers():
+    return {
+        "Authorization": f"token {st.secrets['GH_TOKEN']}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28"
+    }
+
+def _gh_get_current_sha():
+    url, branch = _gh_cfg()
+    r = requests.get(url, headers=_gh_headers(), params={"ref": branch}, timeout=30)
+    if r.status_code == 200:
+        return r.json().get("sha")
+    if r.status_code == 404:
+        return None
+    raise RuntimeError(f"GitHub GET falló: {r.status_code} — {r.text[:200]}")
+
+def backup_snapshot_to_github():
+    """Sube ventas.db a GH_PATH. Si ya existe, lo actualiza."""
+    url, branch = _gh_cfg()
+    if not os.path.exists(DB_PATH):
+        raise RuntimeError("No existe la base local para respaldar.")
+    with open(DB_PATH, "rb") as f:
+        data_b64 = base64.b64encode(f.read()).decode("ascii")
+
+    payload = {
+        "message": f"Backup ventas.db {datetime.now():%Y-%m-%d %H:%M:%S}",
+        "content": data_b64,
+        "branch": branch
+    }
+    sha = _gh_get_current_sha()
+    if sha:
+        payload["sha"] = sha
+
+    r = requests.put(url, headers=_gh_headers(), json=payload, timeout=60)
+    if r.status_code in (200, 201):
+        j = r.json()
+        return j.get("content", {}).get("html_url") or j.get("commit", {}).get("html_url")
+    raise RuntimeError(f"GitHub PUT falló: {r.status_code} — {r.text[:200]}")
+
+def restore_from_github_snapshot():
+    """Baja GH_PATH y pisa ventas.db local."""
+    url, branch = _gh_cfg()
+    r = requests.get(url, headers=_gh_headers(), params={"ref": branch}, timeout=30)
+    if r.status_code != 200:
+        raise RuntimeError("No hay backup en GitHub o no se puede acceder.")
+
+    j = r.json()
+    content_b64 = j.get("content")
+    if not content_b64:
+        raise RuntimeError("Contenido vacío del backup.")
+    raw = base64.b64decode(content_b64)
+
+    with open(DB_PATH, "wb") as f:
+        f.write(raw)
+
+    # Validación mínima
+    try:
+        with sqlite3.connect(DB_PATH) as con:
+            con.execute("SELECT 1 FROM sqlite_master WHERE type='table' LIMIT 1;").fetchone()
+    except Exception as e:
+        raise RuntimeError(f"Backup descargado inválido: {e}")
+
+    return True
 
 # =========================
 # DB Helpers & Migrations
@@ -137,108 +238,7 @@ def init_db():
         cur.execute("CREATE INDEX IF NOT EXISTS idx_ops_estado ON operations(estado);")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_ops_sale_date ON operations(sale_date);")
 # --- migración simple: agrega columna 'revendedor' si no existe
-init_db()
 import sqlite3
-
-# === Restore v2: robusto, con diagnóstico ===
-import base64, json, requests
-from collections import defaultdict
-
-def _ops_count():
-    try:
-        with get_conn() as con:
-            return int(con.execute("SELECT COUNT(*) FROM operations").fetchone()[0])
-    except Exception:
-        return 0
-
-def boot_restore():
-    """
-    Política:
-      - RESTORE_POLICY = 'always'  -> siempre restaura del snapshot
-      - 'auto' (default)          -> restaura si no hay datos locales o si el snapshot tiene más operaciones
-      - 'never'                   -> nunca restaura automáticamente
-    """
-    policy = (st.secrets.get("RESTORE_POLICY", "auto") or "auto").lower()
-    try:
-        snap = gh_fetch_json("data/snapshot.json")
-        ops_snap = len(snap.get("operations", []) or [])
-        gen = snap.get("generated_at", "")
-    except Exception as e:
-        st.warning(f"No pude leer snapshot de GitHub: {e}")
-        return
-
-    before = _ops_count()
-    should = False
-    if policy == "always":
-        should = True
-    elif policy == "auto":
-        should = (before == 0 and ops_snap > 0) or (ops_snap > before)
-    elif policy == "never":
-        should = False
-
-    if should:
-        try:
-            restore_db_from_github_snapshot()
-            after = _ops_count()
-            st.toast(f"Base restaurada desde GitHub ({ops_snap} ops → {after}) ✅")
-        except Exception as e:
-            st.error(f"Falló la restauración: {e}")
-
-boot_restore()
-
-# (opcional) panel de diagnóstico visible para admin
-if 'user' in st.session_state and (st.session_state['user'] or {}).get('role') == 'admin':
-    with st.expander("🩺 Estado de restauración (solo admin)"):
-        st.write("RESTORE_POLICY:", st.secrets.get("RESTORE_POLICY", "auto"))
-        try:
-            snap = gh_fetch_json("data/snapshot.json")
-            st.write("Snapshot generated_at:", snap.get("generated_at"))
-            st.write("Snapshot operaciones:", len(snap.get("operations", []) or []))
-        except Exception as e:
-            st.write("Snapshot:", f"ERROR: {e}")
-        st.write("Operaciones locales (después de boot):", _ops_count())
-        if st.button("Forzar restauración ahora"):
-            try:
-                restore_db_from_github_snapshot()
-                st.success("Restaurado ✅")
-                st.experimental_rerun()
-            except Exception as e:
-                st.error(f"Error: {e}")
-
-# === Datos crudos para backup (sin scope/rol) ===
-import pandas as pd
-
-def _local_ops_count():
-    try:
-        with get_conn() as con:
-            return int(con.execute("SELECT COUNT(*) FROM operations").fetchone()[0])
-    except Exception:
-        return 0
-
-def _snapshot_dataframes_all():
-    """Lee TODO desde la DB, sin filtros por usuario/rol."""
-    with get_conn() as con:
-        try:
-            df_ops = pd.read_sql_query("SELECT * FROM operations ORDER BY id", con)
-            # si tu tabla installments tiene columna is_purchase (0=venta,1=compra)
-            df_iv  = pd.read_sql_query(
-                "SELECT * FROM installments WHERE is_purchase=0 ORDER BY operation_id, idx", con
-            )
-            df_ic  = pd.read_sql_query(
-                "SELECT * FROM installments WHERE is_purchase=1 ORDER BY operation_id, idx", con
-            )
-        except Exception:
-            # Fallback si no anda read_sql_query: usar helpers existentes
-            ops = list_operations({}) or []  # <- sin user_scope_filters
-            rows_v, rows_c = [], []
-            for op in ops:
-                rows_v += (list_installments(op["id"], is_purchase=False) or [])
-                rows_c += (list_installments(op["id"], is_purchase=True) or [])
-            df_ops = pd.DataFrame(ops)
-            df_iv  = pd.DataFrame(rows_v)
-            df_ic  = pd.DataFrame(rows_c)
-    return df_ops, df_iv, df_ic
-
 
 def ensure_column_revendedor():
     try:
@@ -259,29 +259,21 @@ def upsert_operation(op):
         cur = con.cursor()
         if op.get("id"):
             q = """UPDATE operations
-                   SET tipo=?, descripcion=?, cliente=?, zona=?, revendedor=?, nombre=?, proveedor=?, L=?, N=?, O=?, estado=?, y_pagado=?, comision=?, sale_date=?, purchase_price=?
+                   SET tipo=?, descripcion=?, cliente=?, zona=?, nombre=?, proveedor=?, L=?, N=?, O=?, estado=?, y_pagado=?, comision=?, sale_date=?, purchase_price=?
                    WHERE id=?"""
-            cur.execute(q, (
-                op["tipo"], op.get("descripcion"), op.get("cliente"),
-                op.get("zona"), op.get("revendedor"), op["nombre"],
-                op.get("proveedor"), op.get("L"), op.get("N"), op.get("O"),
-                op.get("estado"), op.get("y_pagado"), op.get("comision"),
-                op.get("sale_date"), op.get("purchase_price"), op["id"]
-            ))
+            cur.execute(q, (op["tipo"], op.get("descripcion"), op.get("cliente"), op.get("zona"), op["nombre"],
+                            op.get("proveedor"), op.get("L"), op.get("N"), op.get("O"), op.get("estado"),
+                            op.get("y_pagado"), op.get("comision"), op.get("sale_date"),
+                            op.get("purchase_price"), op["id"]))
             return op["id"]
         else:
-            q = """INSERT INTO operations
-                   (tipo, descripcion, cliente, zona, revendedor, nombre, proveedor, L, N, O, estado, y_pagado, comision, sale_date, purchase_price)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
-            cur.execute(q, (
-                op["tipo"], op.get("descripcion"), op.get("cliente"),
-                op.get("zona"), op.get("revendedor"), op["nombre"],
-                op.get("proveedor"), op.get("L"), op.get("N"), op.get("O"),
-                op.get("estado"), op.get("y_pagado"), op.get("comision"),
-                op.get("sale_date"), op.get("purchase_price")
-            ))
+            q = """INSERT INTO operations (tipo, descripcion, cliente, zona, nombre, proveedor, L, N, O, estado, y_pagado, comision, sale_date, purchase_price)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
+            cur.execute(q, (op["tipo"], op.get("descripcion"), op.get("cliente"), op.get("zona"), op["nombre"],
+                            op.get("proveedor"), op.get("L"), op.get("N"), op.get("O"), op.get("estado"),
+                            op.get("y_pagado"), op.get("comision"), op.get("sale_date"),
+                            op.get("purchase_price")))
             return cur.lastrowid
-
 
 def delete_operation(operation_id: int):
     with get_conn() as con:
@@ -643,114 +635,12 @@ def rename_admin_user(old_username: str, new_username: str, current_password: st
     except sqlite3.IntegrityError:
         return False, "Ya existe un usuario con ese nombre."
 
-# ===== RESTORE DESDE GITHUB SNAPSHOT (pegar antes del UI) =====
-import base64, json, requests
-from collections import defaultdict
 
-def render_backup_restore_diag():
-    with st.expander("🩺 Backup/Restore — diagnóstico", expanded=False):
-        st.write("RESTORE_POLICY:", st.secrets.get("RESTORE_POLICY", "auto"))
-        try:
-            snap = gh_fetch_json("data/snapshot.json")
-            st.write("Snapshot generated_at:", snap.get("generated_at"))
-            st.write("Snapshot operaciones:", len(snap.get("operations", []) or []))
-        except Exception as e:
-            st.error(f"No pude leer snapshot: {e}")
-        st.write("Operaciones locales:", _local_ops_count())
-
-        c1, c2 = st.columns(2)
-        with c1:
-            if st.button("🛠 Reconstruir snapshot completo (ignorar filtros)"):
-                try:
-                    backup_snapshot_to_github()
-                    st.success("Snapshot reconstruido y subido ✅")
-                except Exception as e:
-                    st.error(f"Error: {e}")
-        with c2:
-            if st.button("Forzar restauración ahora"):
-                try:
-                    restore_db_from_github_snapshot()
-                    st.success("Restaurado ✅")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Error: {e}")
-
-def backup_snapshot_to_github():
-    """Sube snapshot + CSVs con TODO (sin filtros) y evita subir vacío si hay datos locales."""
-    df_ops, df_iv, df_ic = _snapshot_dataframes_all()
-    local_cnt = _local_ops_count()
-
-    # 🚫 Guardrail: no subir vacío si hay datos locales
-    if local_cnt > 0 and (df_ops is None or df_ops.empty):
-        raise RuntimeError("Backup abortado: snapshot vacío detectado aunque la DB local tiene datos.")
-
-    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    commit_msg = f"backup: snapshot {ts}"
-
-    # JSON con todo
-    json_blob = {
-        "generated_at": ts,
-        "operations": (df_ops.to_dict(orient="records") if df_ops is not None else []),
-        "installments_venta": (df_iv.to_dict(orient="records") if df_iv is not None else []),
-        "installments_compra": (df_ic.to_dict(orient="records") if df_ic is not None else []),
-    }
-    json_bytes = json.dumps(json_blob, ensure_ascii=False, indent=2).encode("utf-8")
-
-    urls = {}
-    urls["snapshot.json"] = gh_upsert_file("data/snapshot.json", json_bytes, commit_msg)
-    # CSV crudos
-    urls["operations.csv"]          = gh_upsert_file("data/operations.csv", df_ops.to_csv(index=False).encode("utf-8"), commit_msg) if df_ops is not None else None
-    urls["installments_venta.csv"]  = gh_upsert_file("data/installments_venta.csv", df_iv.to_csv(index=False).encode("utf-8"), commit_msg) if df_iv is not None else None
-    urls["installments_compra.csv"] = gh_upsert_file("data/installments_compra.csv", df_ic.to_csv(index=False).encode("utf-8"), commit_msg) if df_ic is not None else None
-
-    # (opcional) si exportás también los listados “Cuotas (2+) / Un pago (1)” para Sheets, rehacelos SIN scope:
-    try:
-        df_multi, df_uno = _build_listado_dataframes_for_export_all()
-        urls["listado_multi.csv"] = gh_upsert_file("data/listado_multi.csv", df_multi.to_csv(index=False).encode("utf-8"), commit_msg)
-        urls["listado_uno.csv"]   = gh_upsert_file("data/listado_uno.csv",   df_uno.to_csv(index=False).encode("utf-8"), commit_msg)
-    except Exception:
-        pass
-
-    return urls
-
-
-def backup_zip_bytes():
-    """Por si querés un ZIP descargable además (opcional)."""
-    df_ops, df_iv, df_ic = _snapshot_dataframes_all()
-    mem = io.BytesIO()
-    with zipfile.ZipFile(mem, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
-        zf.writestr("operations.csv", df_ops.to_csv(index=False))
-        zf.writestr("installments_venta.csv", df_iv.to_csv(index=False))
-        zf.writestr("installments_compra.csv", df_ic.to_csv(index=False))
-    mem.seek(0)
-    return mem.getvalue()
-
-
-# ========= /BACKUP A GITHUB =========
-
-
-# (opcional) alias si tu código usa is_admin_user() en vez de is_admin()
-def is_admin_user():
-    try:
-        return is_admin()
-    except NameError:
-        # si tu helper se llama distinto, ajustalo acá
-        return False
-# ===== /RESTORE DESDE GITHUB SNAPSHOT =====
-
-# Auto-restore si no hay operaciones locales (pasa en cada reboot de Streamlit Cloud)
-try:
-    with get_conn() as con:
-        row = con.execute("SELECT COUNT(*) FROM operations").fetchone()
-        cant = row[0] if row else 0
-    if cant == 0:
-        if restore_db_from_github_snapshot():
-            st.toast("Base restaurada desde GitHub ✅", icon="✅")
-except Exception as e:
-    st.warning(f"No se pudo restaurar automáticamente: {e}")
 # =========================
 # UI
 # =========================
+init_db()
+restore_on_boot_once()
 require_login()
 
 # Sidebar sesión
@@ -767,21 +657,24 @@ st.title("Gestión Ventas 2025 — Ventas + Compras (inversor)")
 
 # =========================
 # Tabs según rol
-is_admin_flag = is_admin()
-if is_admin_flag:
+# =========================
+is_admin_user = is_admin()
+if is_admin_user:
     tab_admin, tab_listar, tab_reportes, tab_inversores, tab_crear, tab_cal = st.tabs(
         ["👤 Administración", "📋 Listado & gestión", "📊 Reportes KPI", "🤝 Inversores", "➕ Nueva venta", "📅 Calendario"]
     )
 else:
-    tab_listar, tab_cal = st.tabs(["📋 Listado & gestión", "📅 Calendario"])
+    tab_listar, tab_cal = st.tabs(
+        ["📋 Listado & gestión", "📅 Calendario"]
+    )
 
-if is_admin_flag:
+# --------- 👤 ADMINISTRACIÓN (solo admin) ---------
+if is_admin_user:
     import requests
     import streamlit as st
 
-    
     st.markdown("### 📤 Exportar a Google Sheets (ahora mismo)")
-    if is_admin_flag:
+    if is_admin():
         if st.button("Exportar ahora (Web App)"):
             try:
                 url = st.secrets["GS_WEBAPP_URL"]
@@ -797,62 +690,25 @@ if is_admin_flag:
         st.info("Solo un administrador puede exportar a Google Sheets.")
 
     with tab_admin:
-        # === Guardar backup (snapshot → GitHub) y ZIP local ===
-        st.markdown("### 💾 Guardar backup")
-        col_save_gh, col_zip = st.columns([1,1])
-
-        with col_save_gh:
-            if st.button("💾 Guardar backup ahora", type="primary", use_container_width=True, key="btn_backup_now"):
-                try:
-                    urls = backup_snapshot_to_github()
-                    st.success("Backup subido a GitHub ✅")
-                    if isinstance(urls, dict) and urls:
-                        for k, v in urls.items():
-                            if v:
-                                st.write(f"- {k}: {v}")
-                    st.toast("Backup guardado en GitHub ✅", icon="✅")
-                except Exception as e:
-                    st.error(f"Error al guardar backup: {e}")
-
-        with col_zip:
-            try:
-                zbytes = backup_zip_bytes()
-                st.download_button(
-                    "⬇️ Descargar ZIP de backup",
-                    data=zbytes,
-                    file_name="backup.zip",
-                    mime="application/zip",
-                    use_container_width=True,
-                    key="btn_backup_zip"
-                )
-            except Exception as e:
-                st.warning(f"No se pudo generar el ZIP: {e}")
-
-        render_backup_restore_diag()
-        st.markdown("### ♻️ Restaurar base desde GitHub (snapshot)")
-        if st.button("Restaurar ahora", key="btn_restore_now"):
-            try:
-                # opcional: contadores para mostrar el efecto de la restauración
-                before = _ops_count() if "_ops_count" in globals() else None
-
-                ok = restore_db_from_github_snapshot()  # ← usa el snapshot de data/snapshot.json
-                after = _ops_count() if "_ops_count" in globals() else None
-
-                if ok:
-                    msg = "Restaurado ✅"
-                    if before is not None and after is not None:
-                        msg += f" (operaciones: {before} → {after})"
-                    st.success(msg)
-                    st.toast("Base restaurada desde GitHub ✅", icon="✅")
-                    st.rerun()  # recarga la app para ver los datos restaurados
-                else:
-                    st.warning("No se realizó la restauración (snapshot vacío o invalido).")
-            except Exception as e:
-                st.error(f"Error al restaurar: {e}")
-
-
         st.subheader("👤 Administración")
-
+        st.markdown("### 💾 Backup & Restore (GitHub)")
+        c1, c2 = st.columns(2)
+        with c1:
+            if st.button("💾 Guardar backup ahora"):
+                try:
+                    url = backup_snapshot_to_github()
+                    st.success("Backup subido a GitHub ✅")
+                    if url: st.markdown(f"[Ver commit →]({url})")
+                except Exception as e:
+                    st.error(f"Falló el backup: {e}")
+        with c2:
+            if st.button("♻️ Restaurar último backup"):
+                try:
+                    restore_from_github_snapshot()
+                    st.success("Restaurado desde GitHub ✅")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"No se pudo restaurar: {e}")
         # --- Vendedores (maestro)
         st.markdown("### 📇 Vendedores")
         colv1, colv2 = st.columns([2,1])
@@ -951,41 +807,68 @@ if is_admin_flag:
                             st.success("Volvé a iniciar sesión con el nuevo usuario.")
                             st.session_state.clear()
                             st.rerun()
-        # === Diagnóstico de backups (solo admin) ===
-        with st.expander("🩺 Backup/Restore — diagnóstico"):
-                colA, colB = st.columns(2)
-                with colA:
-                    st.write("Operaciones locales:", _local_ops_count())
+        # === Diagnóstico y prueba de Backup a GitHub ===
+            import base64, requests
+            from datetime import datetime, timezone
+
+            st.markdown("### 🔎 Diagnóstico Backup a GitHub")
+            c1, c2 = st.columns(2)
+
+            with c1:
+                if st.button("Probar backup ahora (archivo de prueba)"):
                     try:
-                        snap = gh_fetch_json("data/snapshot.json")
-                        st.write("Snapshot generated_at:", snap.get("generated_at"))
-                        st.write("Snapshot operaciones:", len(snap.get("operations", []) or []))
+                        # 1) Chequear secrets básicos
+                        faltan = [k for k in ("GH_TOKEN","GH_REPO") if k not in st.secrets]
+                        if faltan:
+                            st.error("Faltan estos Secrets: " + ", ".join(faltan))
+                        else:
+                            st.success("Secrets OK")
+
+                        # 2) Chequear acceso al repo
+                        repo = st.secrets["GH_REPO"]
+                        branch = st.secrets.get("GH_BRANCH", "main")
+                        headers = {"Authorization": f"Bearer {st.secrets['GH_TOKEN']}",
+                                "Accept": "application/vnd.github+json"}
+
+                        r_repo = requests.get(f"https://api.github.com/repos/{repo}", headers=headers, timeout=20)
+                        if r_repo.status_code != 200:
+                            st.error(f"Repo no accesible: {r_repo.status_code} — {r_repo.text[:160]}")
+                        else:
+                            st.success("Acceso al repo OK")
+
+                        # 3) Escribir archivo de prueba
+                        ts = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+                        path = f"data/_probe_{ts}.txt"
+                        url  = f"https://api.github.com/repos/{repo}/contents/{path}"
+                        payload = {
+                            "message": f"probe {ts}",
+                            "content": base64.b64encode(f"ok {ts}".encode()).decode(),
+                            "branch": branch
+                        }
+                        r_put = requests.put(url, headers=headers, json=payload, timeout=30)
+                        if r_put.status_code in (200, 201):
+                            html = r_put.json()["content"]["html_url"]
+                            st.success(f"Escritura OK → {html}")
+                        else:
+                            st.error(f"PUT falló: {r_put.status_code} — {r_put.text[:300]}")
+
                     except Exception as e:
-                        st.error(f"No pude leer snapshot de GitHub: {e}")
+                        st.exception(e)
 
-                    if st.button("🛠 Reconstruir snapshot completo (ignorar filtros)"):
-                        try:
-                            urls = backup_snapshot_to_github()
-                            st.success("Snapshot reconstruido y subido ✅")
-                            for k, v in urls.items():
-                                if v: st.write(f"- {k}: {v}")
-                        except Exception as e:
-                            st.error(f"Error al reconstruir snapshot: {e}")
+            with c2:
+                if st.button("Forzar backup real (snapshot.json + CSVs)"):
+                    try:
+                        urls = backup_snapshot_to_github()
+                        st.success("Backup subido a GitHub ✅")
+                        for nombre, link in (urls or {}).items():
+                            st.write(f"• {nombre}: {link}")
+                    except Exception as e:
+                        st.error(f"No se pudo subir el backup: {e}")
 
-                with colB:
-                    if st.button("🔎 Probar escritura simple (healthcheck)"):
-                        try:
-                            from datetime import datetime, timezone
-                            u = gh_upsert_file("data/_healthcheck.txt", f"ok {datetime.now(timezone.utc)}\n".encode("utf-8"), "healthcheck")
-                            st.success("Escritura OK")
-                            st.write(u)
-                        except Exception as e:
-                            st.error(f"Falló: {e}")
-                
 
 
 # --------- CREAR / EDITAR VENTA (solo admin crea) ---------
-if is_admin_flag:
+if is_admin_user:
     # === CREAR VENTA (con formulario que se limpia y select de vendedores) ===
     with tab_crear:
         st.subheader("Crear nueva venta")
@@ -1467,7 +1350,7 @@ with tab_listar:
 
 
 # --------- REPORTES KPI (AMPLIADO) ---------
-if is_admin_flag:
+if is_admin_user:
         # === REPORTE: "Sueldo" mensual (GANANCIA por mes) ===
     from streamlit.components.v1 import html as st_html
     from datetime import date as _date
@@ -1609,7 +1492,7 @@ if is_admin_flag:
 
 # --------- INVERSORES (DETALLE POR CADA UNO) ---------
 # Ocultamos la pestaña a los vendedores para no exponer datos globales
-if is_admin():
+if is_admin_user:
     with tab_inversores:
         st.subheader("🤝 Inversores")
 
@@ -1983,9 +1866,58 @@ def _json_default(o):
     except Exception:
         return str(o)
 
+def _snapshot_dataframes():
+    """Arma los DataFrames crudos que vamos a subir (operations + installments)."""
+    ops = list_operations(user_scope_filters({})) or []
+
+    rows_iv, rows_ic = [], []
+    for op in ops:
+        vid = op["id"]
+        # Cuotas de VENTA
+        for c in (list_installments(vid, is_purchase=False) or []):
+            r = {"operation_id": vid}
+            r.update(c)
+            rows_iv.append(r)
+        # Cuotas de COMPRA (inversor)
+        for c in (list_installments(vid, is_purchase=True) or []):
+            r = {"operation_id": vid}
+            r.update(c)
+            rows_ic.append(r)
+
+    df_ops = pd.DataFrame(ops)
+    df_iv  = pd.DataFrame(rows_iv)  # installments_venta
+    df_ic  = pd.DataFrame(rows_ic)  # installments_compra
+    return df_ops, df_iv, df_ic
+
+def backup_snapshot_to_github():
+    """Sube 1 JSON y 3 CSVs al repo (se sobreescriben en /data). Devuelve URLs."""
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    commit_msg = f"backup: snapshot {ts}"
+
+    df_ops, df_iv, df_ic = _snapshot_dataframes()
+
+    # JSON único con todo
+    json_blob = {
+        "generated_at": ts,
+        "operations": df_ops.to_dict(orient="records"),
+        "installments_venta": df_iv.to_dict(orient="records"),
+        "installments_compra": df_ic.to_dict(orient="records"),
+    }
+    json_bytes = json.dumps(json_blob, ensure_ascii=False, indent=2, default=_json_default).encode("utf-8")
+
+    urls = {}
+    urls["snapshot.json"] = gh_upsert_file("data/snapshot.json", json_bytes, commit_msg)
+
+    # CSVs (útiles para Excel/Sheets)
+    urls["operations.csv"]          = gh_upsert_file("data/operations.csv", df_ops.to_csv(index=False).encode("utf-8"), commit_msg)
+    urls["installments_venta.csv"]  = gh_upsert_file("data/installments_venta.csv", df_iv.to_csv(index=False).encode("utf-8"), commit_msg)
+    urls["installments_compra.csv"] = gh_upsert_file("data/installments_compra.csv", df_ic.to_csv(index=False).encode("utf-8"), commit_msg)
+
+    return urls
+
 # ===== Exportar listados (Cuotas 2+ y Un pago 1) a CSV y subirlos al repo =====
-# === Listados para Sheets, SIN scope/rol ===
 def _build_listado_rows(ops):
+    """Devuelve filas tipo listado (VENTA y COMPRA) con números crudos (sin $) para Sheets."""
     rows = []
     for op in ops:
         total_cuotas = int(op.get("O") or 0)
@@ -1993,50 +1925,66 @@ def _build_listado_rows(ops):
         price        = float(op.get("purchase_price") or 0.0)
         costo_neto   = float(op.get("L") or 0.0)
         com_total    = float(op.get("comision") or 0.0)
-        com_x        = (com_total/total_cuotas) if total_cuotas>0 else 0.0
+        com_x        = (com_total / total_cuotas) if total_cuotas > 0 else 0.0
 
-        pagado_v     = sum_paid(op["id"], is_purchase=False)
-        pagadas_v    = count_paid_installments(op["id"], is_purchase=False)
-        pend_v_cnt   = max(total_cuotas - pagadas_v, 0)
-        pendiente_v  = venta_total - pagado_v
+        # pagos
+        pagado_venta   = sum_paid(op["id"], is_purchase=False)
+        pagadas_venta  = count_paid_installments(op["id"], is_purchase=False)
+        pend_venta_cnt = max(total_cuotas - pagadas_venta, 0)
+        pendiente_venta = venta_total - pagado_venta
 
-        pagado_c     = sum_paid(op["id"], is_purchase=True)
-        pagadas_c    = count_paid_installments(op["id"], is_purchase=True)
-        pend_c_cnt   = max(total_cuotas - pagadas_c, 0)
-        pendiente_c  = price - pagado_c
-        estado_c     = "CANCELADO" if abs(pagado_c - price) < 0.01 else "VIGENTE"
+        pagado_compra   = sum_paid(op["id"], is_purchase=True)
+        pagadas_compra  = count_paid_installments(op["id"], is_purchase=True)
+        pend_compra_cnt = max(total_cuotas - pagadas_compra, 0)
+        pendiente_compra = price - pagado_compra
+        estado_compra    = "CANCELADO" if abs(pagado_compra - price) < 0.01 else "VIGENTE"
 
-        fecha        = parse_iso_or_today(op.get("sale_date") or op.get("created_at")).strftime("%d/%m/%Y")
-        ganancia     = (venta_total - price - com_total)
+        fecha_mostrar = parse_iso_or_today(op.get("sale_date") or op.get("created_at")).strftime("%d/%m/%Y")
+        ganancia = (venta_total - price - com_total)
 
         # VENTA
         rows.append({
             "Tipo":"VENTA","ID venta":op["id"],"Descripción":op.get("descripcion"),
             "Cliente":op.get("cliente"),"Proveedor":op.get("proveedor") or "",
-            "Inversor":op.get("nombre"),"Vendedor":op.get("zona"), "Revendedor": op.get("revendedor") or "",
-            "Costo": round(costo_neto), "Precio Compra": "", "Venta": round(venta_total),
-            "Comisión": round(com_total), "Comisión x cuota": round(com_x),
-            "Cuotas": total_cuotas, "Cuotas pendientes": pend_v_cnt,
-            "$ Pagado": round(pagado_v), "$ Pendiente": round(pendiente_v),
-            "Estado": op.get("estado"), "Fecha de cobro": fecha, "Ganancia": round(ganancia),
+            "Inversor":op.get("nombre"),"Vendedor":op.get("zona"),
+            "Revendedor": op.get("revendedor") or "",
+            "Costo": round(costo_neto),
+            "Precio Compra": "",  # en VENTA va vacío
+            "Venta": round(venta_total),
+            "Comisión": round(com_total),
+            "Comisión x cuota": round(com_x),
+            "Cuotas": total_cuotas,
+            "Cuotas pendientes": pend_venta_cnt,
+            "$ Pagado": round(pagado_venta),
+            "$ Pendiente": round(pendiente_venta),
+            "Estado": op.get("estado"),
+            "Fecha de cobro": fecha_mostrar,
+            "Ganancia": round(ganancia),
         })
         # COMPRA
         rows.append({
             "Tipo":"COMPRA","ID venta":op["id"],"Descripción":"↑",
             "Cliente":"↑","Proveedor":op.get("proveedor") or "",
-            "Inversor":op.get("nombre"),"Vendedor":"↑","Revendedor":"↑",
-            "Costo":"↑","Precio Compra": round(price),
-            "Venta":"↑","Comisión":"↑","Comisión x cuota":"↑",
-            "Cuotas": total_cuotas, "Cuotas pendientes": pend_c_cnt,
-            "$ Pagado": round(pagado_c), "$ Pendiente": round(pendiente_c),
-            "Estado": estado_c, "Fecha de cobro": fecha, "Ganancia":"↑",
+            "Inversor":op.get("nombre"),"Vendedor":"↑",
+            "Revendedor": "↑",
+            "Costo":"↑",
+            "Precio Compra": round(price),
+            "Venta":"↑",
+            "Comisión":"↑",
+            "Comisión x cuota":"↑",
+            "Cuotas": total_cuotas,
+            "Cuotas pendientes": pend_compra_cnt,
+            "$ Pagado": round(pagado_compra),
+            "$ Pendiente": round(pendiente_compra),
+            "Estado": estado_compra,
+            "Fecha de cobro": fecha_mostrar,
+            "Ganancia":"↑",
         })
     return rows
 
-def _build_listado_dataframes_for_export_all():
-    with get_conn() as con:
-        df_ops = pd.read_sql_query("SELECT * FROM operations", con)
-    ops_all = df_ops.to_dict(orient="records")
+def _build_listado_dataframes_for_export():
+    filtros = user_scope_filters({})
+    ops_all = list_operations(filtros) or []
     ops_multi = [op for op in ops_all if int(op.get("O") or 0) >= 2]
     ops_uno   = [op for op in ops_all if int(op.get("O") or 0) == 1]
 
@@ -2044,132 +1992,54 @@ def _build_listado_dataframes_for_export_all():
                   "Precio Compra","Venta","Comisión","Comisión x cuota","Cuotas",
                   "Cuotas pendientes","$ Pagado","$ Pendiente","Estado","Fecha de cobro","Ganancia"]
 
-    df_multi = pd.DataFrame(_build_listado_rows(ops_multi))
-    df_uno   = pd.DataFrame(_build_listado_rows(ops_uno))
-    if not df_multi.empty: df_multi = df_multi[cols_order]
-    if not df_uno.empty:   df_uno   = df_uno[cols_order]
-    return df_multi, df_uno
-
     import pandas as pd
     df_multi = pd.DataFrame(_build_listado_rows(ops_multi))
     df_uno   = pd.DataFrame(_build_listado_rows(ops_uno))
     if not df_multi.empty: df_multi = df_multi[cols_order]
     if not df_uno.empty:   df_uno   = df_uno[cols_order]
     return df_multi, df_uno
-# ========= RESTORE DESDE GITHUB SNAPSHOT =========
-
-def gh_fetch_json(path_in_repo: str):
-    """Descarga y decodifica un JSON del repo/branch configurado en secrets."""
-    repo   = st.secrets["GH_REPO"]
-    branch = st.secrets.get("GH_BRANCH", "main")
-    url = f"https://api.github.com/repos/{repo}/contents/{path_in_repo}"
-    headers = {
-        "Accept": "application/vnd.github+json",
-    }
-    tok = st.secrets.get("GH_TOKEN")
-    if tok:
-        headers["Authorization"] = f"Bearer {tok}"
-    r = requests.get(url, headers=headers, params={"ref": branch}, timeout=30)
-    if r.status_code != 200:
-        raise RuntimeError(f"GitHub {r.status_code}: {r.text[:200]}")
-    obj = r.json()
-    if "content" not in obj:
-        raise RuntimeError("Respuesta GitHub sin 'content'")
-    data = base64.b64decode(obj["content"])
-    return json.loads(data.decode("utf-8"))
-
-def _wipe_local_db():
-    """Borra datos locales para rehidratar desde snapshot (ojo: orden por FK)."""
-    with get_conn() as con:
-        try:
-            con.execute("DELETE FROM installments")
-        except Exception:
-            pass
-        try:
-            con.execute("DELETE FROM operations")
-        except Exception:
-            pass
-
-def restore_db_from_github_snapshot():
-    """
-    Restaura la base local desde data/snapshot.json:
-    - recrea operaciones
-    - recrea cuotas (distribuidas) y marca como pagadas según snapshot (con fecha)
-    - recalcula estados
-    """
-    snap = gh_fetch_json("data/snapshot.json")
-    ops = snap.get("operations", [])
-    # Evitar restaurar si el snapshot remoto está vacío
-    if not ops:
-        return False
-    iv  = snap.get("installments_venta", [])
-    ic  = snap.get("installments_compra", [])
-
-    # Agrupar cuotas por venta e índice
-    from collections import defaultdict
-    v_by_op = defaultdict(list)
-    c_by_op = defaultdict(list)
-    for r in iv: v_by_op[int(r["operation_id"])].append(r)
-    for r in ic: c_by_op[int(r["operation_id"])].append(r)
-
-    # Limpiar tablas
-    _wipe_local_db()
-
-    # Insertar operaciones y cuotas
-    for op in ops:
-        old_id = int(op.get("id") or 0)
-        total_cuotas = int(op.get("O") or 0)
-        venta_total  = float(op.get("N") or 0.0)
-        price        = float(op.get("purchase_price") or 0.0)
-
-        # Armar objeto compatible con tu upsert (SIN id)
-        new_op = {
-            "tipo": "VENTA",
-            "descripcion": op.get("descripcion") or None,
-            "cliente": op.get("cliente") or None,
-            "proveedor": op.get("proveedor") or None,
-            "zona": op.get("zona") or None,          # vendedor
-            "revendedor": op.get("revendedor") or None,
-            "nombre": op.get("nombre") or None,      # inversor
-            "L": float(op.get("L") or 0.0),          # costo neto
-            "N": float(op.get("N") or 0.0),          # venta
-            "O": int(op.get("O") or 0),              # cuotas
-            "estado": op.get("estado") or "VIGENTE",
-            "comision": float(op.get("comision") or 0.0),
-            "sale_date": op.get("sale_date") or op.get("created_at"),
-            "purchase_price": float(op.get("purchase_price") or 0.0),
-        }
-        new_id = upsert_operation(new_op)  # <- debe devolverte el id nuevo
-
-        # Crear cuotas distribuidas según totales (como hace la app)
-        if total_cuotas > 0:
-            create_installments(new_id, distribuir(venta_total, total_cuotas), is_purchase=False)
-            create_installments(new_id, distribuir(price,        total_cuotas), is_purchase=True)
-
-            # Marcar pagadas con fecha según snapshot
-            # (mapeamos por índice de cuota)
-            i_new_v = {row["idx"]: row for row in list_installments(new_id, is_purchase=False)}
-            i_new_c = {row["idx"]: row for row in list_installments(new_id, is_purchase=True)}
-
-            for r in v_by_op.get(old_id, []):
-                if r.get("paid"):
-                    nv = i_new_v.get(int(r["idx"]))
-                    if nv:
-                        paid_at = r.get("paid_at")
-                        set_installment_paid(nv["id"], True, paid_at_iso=(paid_at or None))
-
-            for r in c_by_op.get(old_id, []):
-                if r.get("paid"):
-                    nc = i_new_c.get(int(r["idx"]))
-                    if nc:
-                        paid_at = r.get("paid_at")
-                        set_installment_paid(nc["id"], True, paid_at_iso=(paid_at or None))
-
-        recalc_status_for_operation(new_id)
-
-    return True
-# ========= /RESTORE DESDE GITHUB SNAPSHOT =========
 
 # >>> Actualiza tu backup para subir también los listados:
+def backup_snapshot_to_github():
+    """Sube snapshot.json + CSVs crudos + listados_multi/unopago a /data del repo."""
+    from datetime import datetime, timezone
+    import json, pandas as pd
+
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    commit_msg = f"backup: snapshot {ts}"
+
+    # lo que ya subías:
+    df_ops, df_iv, df_ic = _snapshot_dataframes()
+    json_blob = {
+        "generated_at": ts,
+        "operations": df_ops.to_dict(orient="records"),
+        "installments_venta": df_iv.to_dict(orient="records"),
+        "installments_compra": df_ic.to_dict(orient="records"),
+    }
+    json_bytes = json.dumps(json_blob, ensure_ascii=False, indent=2, default=_json_default).encode("utf-8")
+
+    urls = {}
+    urls["snapshot.json"] = gh_upsert_file("data/snapshot.json", json_bytes, commit_msg)
+    urls["operations.csv"]          = gh_upsert_file("data/operations.csv", df_ops.to_csv(index=False).encode("utf-8"), commit_msg)
+    urls["installments_venta.csv"]  = gh_upsert_file("data/installments_venta.csv", df_iv.to_csv(index=False).encode("utf-8"), commit_msg)
+    urls["installments_compra.csv"] = gh_upsert_file("data/installments_compra.csv", df_ic.to_csv(index=False).encode("utf-8"), commit_msg)
+
+    # NUEVO: subir listados listos para Sheets
+    df_multi, df_uno = _build_listado_dataframes_for_export()
+    urls["listado_multi.csv"] = gh_upsert_file("data/listado_multi.csv", df_multi.to_csv(index=False).encode("utf-8"), commit_msg)
+    urls["listado_uno.csv"]   = gh_upsert_file("data/listado_uno.csv", df_uno.to_csv(index=False).encode("utf-8"), commit_msg)
+
+    return urls
 
 
+def backup_zip_bytes():
+    """Por si querés un ZIP descargable además (opcional)."""
+    df_ops, df_iv, df_ic = _snapshot_dataframes()
+    mem = io.BytesIO()
+    with zipfile.ZipFile(mem, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("operations.csv", df_ops.to_csv(index=False))
+        zf.writestr("installments_venta.csv", df_iv.to_csv(index=False))
+        zf.writestr("installments_compra.csv", df_ic.to_csv(index=False))
+    mem.seek(0)
+    return mem.getvalue()
+# ========= /BACKUP A GITHUB =========

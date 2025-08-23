@@ -842,6 +842,9 @@ if is_admin_user:
                 except Exception as e:
                     st.error(f"No se pudo restaurar: {e}")
         st.markdown("### 📤 Exportar a Google Sheets (ahora mismo)")
+        with st.expander("🔍 Logs de exportación (persisten en la sesión)"):
+            for line in st.session_state.export_logs[-200:]:  # últimas 200 líneas
+                st.text(line)
         if is_admin():
             if st.button("Probar conexión"):
                 _ping_webapp()
@@ -877,9 +880,6 @@ if is_admin_user:
                     if cols[2].button("Desactivar", key=f"deact_v_{v['id']}"):
                         deactivate_vendor(v["id"])
                         st.rerun()
-    with st.expander("🔍 Logs de exportación (persisten en la sesión)"):
-        for line in st.session_state.export_logs[-200:]:  # últimas 200 líneas
-            st.text(line)
 
 
 

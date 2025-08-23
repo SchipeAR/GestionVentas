@@ -167,6 +167,15 @@ def restore_from_github_snapshot():
 
     return True
 
+# ====== LOG PERSISTENTE EN SESSION_STATE ======
+if "export_logs" not in st.session_state:
+    st.session_state.export_logs = []
+
+def _log(msg):
+    ts = time.strftime("%H:%M:%S")
+    st.session_state.export_logs.append(f"[{ts}] {msg}")
+    st.write(msg)  # también lo muestra en vivo
+
 def _ping_webapp():
     url   = st.secrets.get("GS_WEBAPP_URL", "")
     token = st.secrets.get("GS_WEBAPP_TOKEN", "")
@@ -188,47 +197,73 @@ def _ping_webapp():
 def exportar_a_sheets_webapp_desde_sqlite(db_path: str):
     url   = st.secrets.get("GS_WEBAPP_URL", "")
     token = st.secrets.get("GS_WEBAPP_TOKEN", "")
-    if not url or not token:
-        st.error("Falta GS_WEBAPP_URL o GS_WEBAPP_TOKEN en Secrets.")
-        return
-
-    # Diagnóstico de base
-    try:
-        with sqlite3.connect(db_path) as con:
-            cur = con.cursor()
-            tablas = [r[0] for r in cur.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")]
-            if not tablas:
-                st.error("La base existe pero no tiene tablas (o está vacía).")
-                return
-            sheets = []
-            for t in tablas:
-                df = pd.read_sql_query(f"SELECT * FROM {t}", con)
-                values = [df.columns.tolist()] + df.astype(str).fillna("").values.tolist()
-                sheets.append({"name": t, "values": values})
-    except Exception as e:
-        st.exception(e)
-        st.error("No pude leer ventas.db. Revisá la ruta DB_PATH.")
-        return
-
-    # Enviar a la Web App con reintento suave
-    payload = {"token": token, "sheets": sheets}
-    for attempt in range(3):
+    with st.status("Exportando a Google Sheets…", expanded=True) as status:
         try:
-            r = requests.post(url, json=payload, timeout=60)
-            if r.status_code == 200 and "ok" in r.text.lower():
-                st.success("Exportado correctamente ✅ (Google Sheets actualizado)")
-                return
-            if r.status_code == 429:
-                time.sleep(2 * (attempt + 1))
-                continue
-            st.error(f"Falló la exportación: {r.status_code} — {r.text[:300]}")
-            st.write("URL final:", r.url)
-            return
+            # 0) Validaciones básicas
+            if not url or not token:
+                _log("❌ Falta GS_WEBAPP_URL o GS_WEBAPP_TOKEN en Secrets.")
+                status.update(label="Fallo: faltan secrets", state="error"); return
+            _log("✅ Secrets presentes.")
+
+            # 1) DB: existencia y tamaño
+            if not os.path.exists(db_path):
+                _log(f"❌ No existe la base: {db_path}")
+                status.update(label="Fallo: no existe ventas.db", state="error"); return
+            _log(f"📦 ventas.db encontrada ({os.path.getsize(db_path)} bytes).")
+
+            # 2) Leer tablas
+            with sqlite3.connect(db_path) as con:
+                cur = con.cursor()
+                tablas = [r[0] for r in cur.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")]
+                _log(f"📚 Tablas encontradas: {', '.join(tablas) if tablas else '(ninguna)'}")
+                if not tablas:
+                    _log("❌ La base no tiene tablas (o está vacía).")
+                    status.update(label="Fallo: base vacía", state="error"); return
+
+                sheets = []
+                total_filas = 0
+                for t in tablas:
+                    df = pd.read_sql_query(f"SELECT * FROM {t}", con)
+                    values = [df.columns.tolist()] + df.astype(str).fillna("").values.tolist()
+                    sheets.append({"name": t, "values": values})
+                    total_filas += len(df)
+                _log(f"🧮 Filas totales a exportar: {total_filas}")
+
+            # 3) Probar Web App rápida (opcional pero útil)
+            try:
+                rp = requests.get(url, params={"token": token}, timeout=15, allow_redirects=True)
+                _log(f"Ping final {urlparse(rp.url).netloc} → {rp.status_code}: {rp.text[:60]}")
+                if rp.status_code != 200:
+                    _log("⚠️ Web App no respondió 200 en ping; intento igual el POST…")
+            except Exception as e:
+                _log(f"⚠️ Ping falló ({e}); intento igual el POST…")
+
+            # 4) Enviar POST con reintentos suaves
+            payload = {"token": token, "sheets": sheets}
+            for attempt in range(3):
+                _log(f"⬆️ POST intento {attempt+1}…")
+                try:
+                    r = requests.post(url, json=payload, timeout=60, allow_redirects=True)
+                    _log(f"↩️ Respuesta {r.status_code}: {r.text[:120]}")
+                    if r.status_code == 200 and "ok" in r.text.lower():
+                        status.update(label="Exportación completada", state="complete")
+                        st.toast("Google Sheets actualizado ✅")
+                        return
+                    if r.status_code == 429:
+                        time.sleep(2 * (attempt + 1))
+                        continue
+                    status.update(label=f"Fallo HTTP {r.status_code}", state="error")
+                    return
+                except Exception as e:
+                    _log(f"❌ Error de red: {e}")
+                    status.update(label="Fallo de red", state="error")
+                    return
+
+            status.update(label="Fallo: 429 persistente", state="error")
         except Exception as e:
-            st.error(f"Error de red: {e}")
-            return
-    st.error("429 persistente. Probá de nuevo en unos segundos.")
+            _log(f"💥 Excepción no controlada: {e}")
+            status.update(label="Fallo inesperado", state="error")
 
 # =========================
 # DB Helpers & Migrations
@@ -842,6 +877,11 @@ if is_admin_user:
                     if cols[2].button("Desactivar", key=f"deact_v_{v['id']}"):
                         deactivate_vendor(v["id"])
                         st.rerun()
+        with st.expander("🔍 Logs de exportación (persisten en la sesión)"):
+            for line in st.session_state.export_logs[-200:]:  # últimas 200 líneas
+                st.text(line)
+
+
 
         st.divider()
 

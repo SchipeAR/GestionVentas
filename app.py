@@ -1331,29 +1331,62 @@ with tab_listar:
 
             # ---- DataFrame y orden de columnas ----
             df_ops = pd.DataFrame(rows)
+            # link que selecciona el ID al hacer click
+            df_ops["Seleccionar"] = df_ops["ID venta"].apply(lambda i: f"?selid={int(i)}")
+
             cols_order = [
-                "ID venta","Tipo","Descripción","Cliente","Inversor","Vendedor","Revendedor","Costo",
+                "Tipo","ID venta","Seleccionar","Descripción","Cliente","Proveedor","Inversor","Vendedor","Revendedor","Costo",
                 "Precio Compra","Venta","Comisión","Comisión x cuota","Cuotas",
-                "Cuotas pendientes","$ Pagado","$ Pendiente","Fecha de cobro","Ganancia","Proveedor","Estado"
+                "Cuotas pendientes","$ Pagado","$ Pendiente","Estado","Fecha de cobro","Ganancia"
             ]
             df_ops = df_ops[cols_order]
 
+
+            # ---- Mostrar tabla (ocultar columnas a vendedores) ----
             # ---- Mostrar tabla (ocultar columnas a vendedores) ----
             if seller:
                 cols_hide = ["Inversor","Ganancia","Costo","Precio Compra"]
                 df_show = df_ops.drop(columns=cols_hide)
             else:
                 df_show = df_ops
-            st.dataframe(df_show, use_container_width=True, hide_index=True)
 
+            st.dataframe(
+                df_show,
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "Seleccionar": st.column_config.LinkColumn(
+                        label="Seleccionar",
+                        help="Click para gestionar este ID",
+                        display_text="Elegir"
+                    )
+                },
+            )
             # ---- Gestión de cuotas / detalle de venta ----
+            # Tomar ?selid de la URL si existe
+            sel_from_url = None
+            try:
+                sel_param = st.query_params.get("selid")
+                # por compatibilidad por si alguna vez llega como lista
+                if isinstance(sel_param, list):
+                    sel_param = sel_param[0] if sel_param else None
+                sel_from_url = int(sel_param) if sel_param else None
+            except Exception:
+                sel_from_url = None
+
+            # ID por defecto: primer VENTA de la tabla (evita agarrar la fila COMPRA)
+            ventas_ids = df_ops.loc[df_ops["Tipo"] == "VENTA", "ID venta"]
+            default_id = int(ventas_ids.iloc[0]) if not ventas_ids.empty else 0
+
+            # Control para ver/cambiar manualmente el ID a gestionar
             selected_id = st.number_input(
                 "ID de venta para gestionar",
                 min_value=0,
                 step=1,
-                value=int(df_ops["ID venta"].iloc[0]),
+                value=int(sel_from_url or default_id),
                 key=f"{key_prefix}_selid"
             )
+
             op = get_operation(selected_id) if selected_id else None
 
             if op:

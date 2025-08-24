@@ -915,7 +915,7 @@ def build_ops_df(ops):
         })
     return pd.DataFrame(rows) if rows else pd.DataFrame(columns=[
         "id","descripcion","cliente","proveedor","vendedor","Revendedor","inversor","venta_total","costo_neto",
-        "precio_compra","comision","cuotas","estado","sale_date","ganancia"
+        "precio_compra","comision","cuotas","sale_date","ganancia","estado"
     ])
 
 def build_installments_df(ops):
@@ -1305,7 +1305,7 @@ with tab_listar:
                     "ID venta": op["id"],
                     "Descripción": "↑",  # solo flecha aquí
                     "Cliente": up_arrow_if_empty(""),
-                    "Proveedor": op.get("proveedor") or "",
+                    "Proveedor": up_arrow_if_empty(""),
                     "Inversor": op.get("nombre"),
                     "Vendedor": up_arrow_if_empty(""),
                     "Revendedor": up_arrow_if_empty(""),
@@ -1326,9 +1326,9 @@ with tab_listar:
             # ---- DataFrame y orden de columnas ----
             df_ops = pd.DataFrame(rows)
             cols_order = [
-                "Tipo","ID venta","Descripción","Cliente","Proveedor","Inversor","Vendedor","Revendedor","Costo",
+                "ID venta","Tipo","Descripción","Cliente","Proveedor","Inversor","Vendedor","Revendedor","Costo",
                 "Precio Compra","Venta","Comisión","Comisión x cuota","Cuotas",
-                "Cuotas pendientes","$ Pagado","$ Pendiente","Estado","Fecha de cobro","Ganancia"
+                "Cuotas pendientes","$ Pagado","$ Pendiente","Fecha de cobro","Ganancia","Estado"
             ]
             df_ops = df_ops[cols_order]
 

@@ -1343,23 +1343,24 @@ with tab_listar:
 
 
             # ---- Mostrar tabla (ocultar columnas a vendedores) ----
-            # ---- Mostrar tabla (ocultar columnas a vendedores) ----
             if seller:
                 cols_hide = ["Inversor","Ganancia","Costo","Precio Compra"]
                 df_show = df_ops.drop(columns=cols_hide)
             else:
                 df_show = df_ops
 
-            # Configuración de columnas: todo solo lectura excepto "Elegir"
-            colcfg = {"Elegir": st.column_config.CheckboxColumn(
-                label="Elegir",
-                help="Selecciona esta VENTA",
-                default=False
-            )}
+            # Config: checkbox solo en VENTA (en COMPRA queda en blanco)
+            colcfg = {
+                "Elegir": st.column_config.CheckboxColumn(
+                    label="Elegir",
+                    help="Selecciona esta VENTA",
+                    default=False
+                )
+            }
+            # El resto, solo lectura
             for col in df_show.columns:
                 if col == "Elegir":
                     continue
-                # Mostrar texto/solo lectura para el resto de columnas
                 colcfg[col] = st.column_config.TextColumn(col, disabled=True)
 
             edited = st.data_editor(
@@ -1371,30 +1372,26 @@ with tab_listar:
                 key=f"{key_prefix}_listado_editor"
             )
 
-            # Si marcaron "Elegir" en alguna fila VENTA, tomar ese ID y actualizar la URL sin abrir pestaña
+            # Procesar selección SIN abrir nueva pestaña y SIN loop infinito
             try:
                 ventas = edited[edited["Tipo"] == "VENTA"]
                 marcadas = ventas[ventas["Elegir"] == True]
+
+                # selid actual en la URL (normalizado)
+                current_sel = st.query_params.get("selid")
+                if isinstance(current_sel, list):
+                    current_sel = current_sel[0] if current_sel else None
+
                 if not marcadas.empty:
                     selid = int(marcadas["ID venta"].iloc[-1])  # última marcada
-                    st.query_params.update(selid=str(selid))
-                    st.rerun()
+                    if str(selid) != (current_sel or ""):
+                        # Actualiza el parámetro y limpia el estado del editor para des-tildar
+                        st.query_params.update(selid=str(selid))
+                        st.session_state.pop(f"{key_prefix}_listado_editor", None)
+                        st.rerun()
             except Exception:
                 pass
 
-
-            st.dataframe(
-                df_show,
-                use_container_width=True,
-                hide_index=True,
-                column_config={
-                    "Seleccionar": st.column_config.LinkColumn(
-                        label="Seleccionar",
-                        help="Click para gestionar este ID",
-                        display_text="Elegir"
-                    )
-                },
-            )
             # ---- Gestión de cuotas / detalle de venta ----
             # Tomar ?selid de la URL si existe
             sel_from_url = None
@@ -1407,11 +1404,20 @@ with tab_listar:
             except Exception:
                 sel_from_url = None
 
-            # ID por defecto: primer VENTA de la tabla (evita agarrar la fila COMPRA)
+           # ---- Gestión de cuotas / detalle de venta ----
+            # Leer ?selid de la URL (si existe)
+            sel_param = st.query_params.get("selid")
+            if isinstance(sel_param, list):
+                sel_param = sel_param[0] if sel_param else None
+            try:
+                sel_from_url = int(sel_param) if sel_param else None
+            except Exception:
+                sel_from_url = None
+
+            # ID por defecto: primera fila VENTA visible
             ventas_ids = df_ops.loc[df_ops["Tipo"] == "VENTA", "ID venta"]
             default_id = int(ventas_ids.iloc[0]) if not ventas_ids.empty else 0
 
-            # Control para ver/cambiar manualmente el ID a gestionar
             selected_id = st.number_input(
                 "ID de venta para gestionar",
                 min_value=0,
@@ -1419,6 +1425,7 @@ with tab_listar:
                 value=int(sel_from_url or default_id),
                 key=f"{key_prefix}_selid"
             )
+
 
             op = get_operation(selected_id) if selected_id else None
 

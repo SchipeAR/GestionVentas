@@ -1086,286 +1086,6 @@ else:
         ["📋 Listado & gestión", "📅 Calendario"]
     )
 
-# --------- 👤 ADMINISTRACIÓN (solo admin) ---------
-if is_admin_user:
-    import requests
-    import streamlit as st
-
-
-    with tab_admin:
-        with card("Vendedores", "🧑‍💼"):
-
-            # === Alta de vendedor ===
-            st.markdown("**Alta de vendedor**")
-            c1, c2 = st.columns([3, 1])
-            with c1:
-                nuevo_vend = st.text_input(
-                    "Nombre del vendedor (tal cual querés que figure en las ventas)",
-                    key="vendor_new_name",
-                    placeholder="Ej.: Juan Pérez"
-                )
-            with c2:
-                if st.button("Agregar vendedor", type="primary", key="btn_add_vendor"):
-                    name = (nuevo_vend or "").strip()
-                    if not name:
-                        st.error("Escribí un nombre.")
-                    else:
-                        ok, msg = add_vendor(name)  # tu función existente
-                        try:
-                            url = backup_snapshot_to_github()
-                            st.success("Backup subido a GitHub ✅")
-                            if url:
-                                st.markdown(f"[Ver commit →]({url})")
-                        except Exception as e:
-                            st.warning(f"Falló el backup: {e}")
-                        (st.success if ok else st.error)(msg)
-                        if ok:
-                            st.rerun()
-
-            # separador visual
-            st.markdown("<hr style='border:0; border-top:1px solid #1f2937; margin:10px 0'>", unsafe_allow_html=True)
-
-            # === Listado y acciones ===
-            vendors_all = list_vendors(active_only=False) or []
-
-            if len(vendors_all) == 0:
-                st.info("No hay vendedores cargados.")
-            else:
-                st.markdown("**Vendedores cargados**")
-                for v in vendors_all:
-                    cols = st.columns([5, 2, 2])
-
-                    # nombre + estado (badge)
-                    estado_badge = "<span class='badge'>activo</span>" if v.get('activo', 1) == 1 else "<span class='badge badge--danger'>inactivo</span>"
-                    cols[0].markdown(f"- {v['nombre']} {estado_badge}", unsafe_allow_html=True)
-
-                    # 🗑️ Eliminar (solo si no tiene ventas)
-                    if cols[1].button("Eliminar", key=f"delvend_{v['id']}"):
-                        usos = count_ops_for_vendor_name(v['nombre'])
-                        if usos > 0:
-                            st.error(f"No se puede eliminar: tiene {usos} ventas asociadas. Desactiválo en su lugar.")
-                        else:
-                            delete_vendor(v["id"])
-                            try:
-                                url = backup_snapshot_to_github()
-                                st.success("Vendedor eliminado y backup subido ✅")
-                                if url: st.markdown(f"[Ver commit →]({url})")
-                            except Exception as e:
-                                st.warning(f"Vendedor eliminado. Falló el backup: {e}")
-                            st.rerun()
-
-                    # 🚫 Desactivar (solo si está activo)
-                    if v.get('activo', 1) == 1:
-                        if cols[2].button("Desactivar", key=f"deact_v_{v['id']}"):
-                            deactivate_vendor(v["id"])
-                            try:
-                                url = backup_snapshot_to_github()
-                                st.success("Vendedor desactivado y backup subido ✅")
-                                if url: st.markdown(f"[Ver commit →]({url})")
-                            except Exception as e:
-                                st.warning(f"Desactivado. Falló el backup: {e}")
-                            st.rerun()
-                    else:
-                        cols[2].write("")  # alineación
-
-
-            
-            
-                    st.divider()
-        st.markdown("<hr style='border:0; border-top:1px solid #1f2937; margin:10px 0'>", unsafe_allow_html=True)
-        # --- Usuarios vendedores
-        st.markdown("### 👥 Usuarios (vendedores)")
-        vend_list = list_vendors(active_only=True)
-        vend_names = [v["nombre"] for v in vend_list]
-        cu1, cu2, cu3, cu4 = st.columns([2,2,2,1])
-        with cu1:
-            u_username = st.text_input("Usuario")
-        with cu2:
-            u_password = st.text_input("Contraseña", type="password")
-        with cu3:
-            u_vendedor = st.selectbox("Vincular a vendedor", options=vend_names, index=0 if vend_names else None, placeholder="Cargá vendedores primero")
-        with cu4:
-            if st.button("Crear usuario"):
-                if not vend_names:
-                    st.error("Primero cargá al menos un vendedor.")
-                else:
-                    ok, msg = create_user(u_username, u_password, role="seller", vendedor_nombre=u_vendedor)
-                    (st.success if ok else st.error)(msg)
-                    if ok: st.rerun()
-        
-        # Listado rápido de usuarios
-        with get_conn() as con:
-            cur = con.cursor()
-            cur.execute("SELECT username, role, vendedor FROM users ORDER BY role DESC, username ASC;")
-            rows = cur.fetchall()
-        if rows:
-            st.markdown("**Usuarios existentes**")
-            for (uname, role, vend) in rows:
-                cols = st.columns([3,2,3,2])
-                cols[0].write(uname)
-                cols[1].write(role)
-                cols[2].write(vend or "-")
-                if role != "admin":
-                    if cols[3].button("Eliminar", key=f"deluser_{uname}"):
-                        delete_user(uname)
-                        st.rerun()
-
-        # --- Seguridad: cuenta de administrador ---
-        with st.expander("🔐 Cambiar credenciales de ADMIN"):
-            admin_uname = (st.session_state.get("user") or {}).get("username", "admin")
-
-            c1, c2 = st.columns(2)
-            with c1:
-                st.text_input("Usuario actual", value=admin_uname, disabled=True)
-                new_username = st.text_input("Nuevo usuario (opcional)")
-                curr_password = st.text_input("Contraseña ACTUAL", type="password")
-            with c2:
-                new_password = st.text_input("Nueva contraseña", type="password")
-                new_password2 = st.text_input("Repetir nueva contraseña", type="password")
-
-            b1, b2 = st.columns(2)
-            with b1:
-                if st.button("Cambiar contraseña"):
-                    if not new_password or new_password != new_password2:
-                        st.error("Las contraseñas no coinciden.")
-                    else:
-                        ok, msg = set_admin_password(admin_uname, curr_password, new_password)
-                        (st.success if ok else st.error)(msg)
-                        if ok:
-                            st.success("Volvé a iniciar sesión con la nueva contraseña.")
-                            st.session_state.clear()
-                            st.rerun()
-
-            with b2:
-                if st.button("Cambiar usuario"):
-                    if not new_username.strip():
-                        st.error("Ingresá el nuevo usuario.")
-                    else:
-                        ok, msg = rename_admin_user(admin_uname, new_username, curr_password)
-                        (st.success if ok else st.error)(msg)
-                        if ok:
-                            st.success("Volvé a iniciar sesión con el nuevo usuario.")
-                            st.session_state.clear()
-                            st.rerun()
-        with card("Backup & Restore (GitHub)", "💽"):
-            c1, c2 = st.columns(2)
-            with c1:
-                if st.button("💾 Guardar backup ahora"):
-                    try:
-                        url = backup_snapshot_to_github()
-                        st.success("Backup subido a GitHub ✅")
-                        if url: st.markdown(f"[Ver commit →]({url})")
-                    except Exception as e:
-                        st.error(f"Falló el backup: {e}")
-            with c2:
-                if st.button("♻️ Restaurar último backup"):
-                    try:
-                        restore_from_github_snapshot()
-                        st.success("Restaurado desde GitHub ✅")
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"No se pudo restaurar: {e}")
-        # === Diagnóstico y prueba de Backup a GitHub ===
-            import base64, requests
-            from datetime import datetime, timezone
-
-            st.markdown("### 🔎 Diagnóstico Backup a GitHub")
-            c1, c2 = st.columns(2)
-
-            with c1:
-                if st.button("Probar backup ahora (archivo de prueba)"):
-                    try:
-                        # 1) Chequear secrets básicos
-                        faltan = [k for k in ("GH_TOKEN","GH_REPO") if k not in st.secrets]
-                        if faltan:
-                            st.error("Faltan estos Secrets: " + ", ".join(faltan))
-                        else:
-                            st.success("Secrets OK")
-
-                        # 2) Chequear acceso al repo
-                        repo = st.secrets["GH_REPO"]
-                        branch = st.secrets.get("GH_BRANCH", "main")
-                        headers = {"Authorization": f"Bearer {st.secrets['GH_TOKEN']}",
-                                "Accept": "application/vnd.github+json"}
-
-                        r_repo = requests.get(f"https://api.github.com/repos/{repo}", headers=headers, timeout=20)
-                        if r_repo.status_code != 200:
-                            st.error(f"Repo no accesible: {r_repo.status_code} — {r_repo.text[:160]}")
-                        else:
-                            st.success("Acceso al repo OK")
-
-                        # 3) Escribir archivo de prueba
-                        ts = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
-                        path = f"data/_probe_{ts}.txt"
-                        url  = f"https://api.github.com/repos/{repo}/contents/{path}"
-                        payload = {
-                            "message": f"probe {ts}",
-                            "content": base64.b64encode(f"ok {ts}".encode()).decode(),
-                            "branch": branch
-                        }
-                        r_put = requests.put(url, headers=headers, json=payload, timeout=30)
-                        if r_put.status_code in (200, 201):
-                            html = r_put.json()["content"]["html_url"]
-                            st.success(f"Escritura OK → {html}")
-                        else:
-                            st.error(f"PUT falló: {r_put.status_code} — {r_put.text[:300]}")
-
-                    except Exception as e:
-                        st.exception(e)
-
-            with c2:
-                if st.button("Forzar backup real (snapshot.json + CSVs)"):
-                    try:
-                        urls = backup_snapshot_to_github()
-                        st.success("Backup subido a GitHub ✅")
-                        for nombre, link in (urls or {}).items():
-                            st.write(f"• {nombre}: {link}")
-                    except Exception as e:
-                        st.error(f"No se pudo subir el backup: {e}")
-            st.markdown("### 📤 Exportar a Google Sheets")
-            if is_admin():
-                c1, c2, c3 = st.columns([1,1,1])
-                if c1.button("Probar conexión"):
-                    _ping_webapp()
-                if c2.button("Exportar ahora"):
-                    exportar_a_sheets_webapp_desde_sqlite(DB_PATH)  # usa tu DB_PATH = "ventas.db"
-                if c3.button("🧹 Limpiar logs"):
-                    st.session_state.export_logs.clear()
-                    st.info("Logs limpiados.")
-            else:
-                st.info("Solo un administrador puede exportar a Google Sheets.")
-
-            with st.expander("🔍 Logs de exportación (persisten en la sesión)"):
-                for line in st.session_state.export_logs[-200:]:
-                    st.text(line)
-        with card("Rescate: ventas ocultas (0 cuotas)", "🧰"):
-            ops_zero = get_ops_zero_cuotas()
-            if not ops_zero:
-                st.info("No hay ventas con 0 cuotas. ¡Todo limpio!")
-            else:
-                st.warning("Estas ventas NO tienen cuotas, por eso no aparecen en el listado. Podés eliminarlas desde acá.")
-                for op in ops_zero:
-                    c1, c2, c3, c4 = st.columns([1, 3, 2, 2])
-                    c1.markdown(f"**#{op['id']}**")
-                    c2.markdown(f"{op['descripcion']}  \n<small style='color:#9aa0a6'>Vendedor: {op['vendedor']} — {op['fecha']}</small>", unsafe_allow_html=True)
-                    pwd = c3.text_input("Contraseña", type="password", key=f"pwd_zero_{op['id']}", placeholder="totoborrar")
-                    if c4.button("Eliminar venta", key=f"btn_zero_{op['id']}"):
-                        if pwd != DELETE_SALES_PASSWORD:   # ya la tenés definida como "totoborrar"
-                            st.error("Contraseña incorrecta.")
-                        else:
-                            delete_operation(op["id"])
-                            try:
-                                backup_snapshot_to_github()
-                                st.toast("Backup subido a GitHub ✅")
-                            except Exception as e:
-                                st.warning(f"No se pudo subir el backup: {e}")
-                            st.success(f"Venta #{op['id']} eliminada ✅")
-                            st.rerun()
-
-
-
-
-
 # --------- CREAR / EDITAR VENTA (solo admin crea) ---------
 if is_admin_user:
     # === CREAR VENTA (con formulario que se limpia y select de vendedores) ===
@@ -1447,7 +1167,6 @@ if is_admin_user:
                         except Exception as e:
                             st.error(f"Falló el backup: {e}")
                         st.rerun() # vuelve con el formulario limpio
-
 
 # --------- LISTADO & GESTIÓN ---------
 with tab_listar:
@@ -1871,6 +1590,110 @@ with tab_listar:
             st.caption("Ventas en 1 solo pago")
             render_listado(ops_uno, key_prefix="uno")
 
+# --------- INVERSORES (DETALLE POR CADA UNO) ---------
+# Ocultamos la pestaña a los vendedores para no exponer datos globales
+if is_admin_user:
+    with tab_inversores:
+        with card("Inversores", "🏦"):
+            st.subheader("🤝 Inversores")
+
+            ops = list_operations()
+            if not ops:
+                st.info("No hay ventas registradas todavía.")
+            else:
+                ops_df = build_ops_df(ops)
+                ins_df = build_installments_df(ops)
+
+                total_pagado_inv = float(ins_df[(ins_df["tipo"]=="COMPRA") & (ins_df["paid"]==True)]["amount"].sum())
+                total_compra = float(ops_df["precio_compra"].sum())
+                total_por_pagar_inv = total_compra - total_pagado_inv
+
+                # Ganancia inversores: 18% del costo neto para GONZA, MARTIN y TOBIAS (YO)
+                ganancia_inversores = float(
+                    ops_df.apply(lambda r: r["costo_neto"]*0.18 if (str(r["inversor"]).upper() in ("GONZA","MARTIN","TOBIAS (YO)")) else 0.0, axis=1).sum()
+                )
+
+                c1, c2, c3 = st.columns(3)
+                c1.metric("Pagado a inversores", f"${total_pagado_inv:,.2f}")
+                c2.metric("Por pagar a inversores", f"${total_por_pagar_inv:,.2f}")
+                c3.metric("Ganancia de inversores (18%)", f"${ganancia_inversores:,.2f}")
+
+                # --- Ganancia por inversor (desglosada) ---
+                def _ganancia_inv_para(inv_nombre: str) -> float:
+                    inv_ops = ops_df[ops_df["inversor"].fillna("").astype(str).str.upper() == inv_nombre.upper()]
+                    return float((inv_ops["costo_neto"] * 0.18).sum())
+
+                gan_gonza  = _ganancia_inv_para("GONZA")
+                gan_martin = _ganancia_inv_para("MARTIN")
+                gan_tobias = _ganancia_inv_para("TOBIAS (YO)")
+
+                g1, g2, g3 = st.columns(3)
+                g1.metric("Ganancia GONZA (18%)", f"${gan_gonza:,.2f}")
+                g2.metric("Ganancia MARTIN (18%)", f"${gan_martin:,.2f}")
+                g3.metric("Ganancia TOBIAS (18%)", f"${gan_tobias:,.2f}")
+
+                st.divider()
+                st.subheader("Cuota mensual a inversores (este mes, impagas)")
+                hoy = date.today()
+                mes_actual, anio_actual = hoy.month, hoy.year
+
+                cuota_mensual_total = 0.0
+                detalle = []
+                for _, r in ops_df.iterrows():
+                    op_id = int(r["id"])
+                    inv = r["inversor"]
+                    cuotas_compra = ins_df[(ins_df["operation_id"]==op_id) & (ins_df["tipo"]=="COMPRA")]
+                    for _, c in cuotas_compra.iterrows():
+                        venc = c["due_date"]
+                        if (venc.year==anio_actual and venc.month==mes_actual) and (not c["paid"]):
+                            cuota_mensual_total += float(c["amount"])
+                            detalle.append({
+                                "ID venta": op_id, "Inversor": inv, "Cuota #": int(c["idx"]),
+                                "Vence": venc.isoformat(), "Monto": float(c["amount"])
+                            })
+                st.metric("Total a pagar este mes (impago)", f"${cuota_mensual_total:,.2f}")
+                if detalle:
+                    st.dataframe(pd.DataFrame(detalle), use_container_width=True)
+                else:
+                    st.info("No hay cuotas impagas de COMPRA que venzan este mes.")
+
+                st.divider()
+                st.subheader("Detalle por inversor")
+                for inv in ["GONZA", "MARTIN", "TOBIAS (YO)"]:
+                    st.markdown(f"### {inv}")
+                    inv_ops = ops_df[ops_df["inversor"].fillna("").astype(str).str.upper()==inv]
+                    if inv_ops.empty:
+                        st.info("Sin operaciones con este inversor.")
+                        continue
+
+                    inv_ins = ins_df[ins_df["inversor"].fillna("").astype(str).str.upper()==inv]
+                    inv_total_compra = float(inv_ops["precio_compra"].sum())
+                    inv_pagado = float(inv_ins[(inv_ins["tipo"]=="COMPRA") & (inv_ins["paid"]==True)]["amount"].sum())
+                    inv_pendiente = inv_total_compra - inv_pagado
+                    inv_ganancia = float((inv_ops["costo_neto"]*0.18).sum())
+
+                    c1, c2, c3 = st.columns(3)
+                    c1.metric("Total comprado (con 18%)", f"${inv_total_compra:,.2f}")
+                    c2.metric("Pagado a este inversor", f"${inv_pagado:,.2f}")
+                    c3.metric("Pendiente con este inversor", f"${inv_pendiente:,.2f}")
+
+                    st.metric("A pagar este mes (impago)", f"${float(inv_ins[(inv_ins['tipo']=='COMPRA') & (inv_ins['paid']==False) & (inv_ins['due_date'].apply(lambda d: d.year==anio_actual and d.month==mes_actual))]['amount'].sum()):,.2f}")
+                    st.write(f"**Ganancia acumulada del inversor (18%)**: ${inv_ganancia:,.2f}")
+
+                    st.markdown("**Operaciones asociadas**")
+                    inv_tbl = inv_ops[["id","descripcion","cliente","venta_total","precio_compra","comision","ganancia","sale_date","cuotas","estado"]].copy()
+                    inv_tbl = inv_tbl.rename(columns={
+                        "id":"ID venta","descripcion":"Descripción","cliente":"Cliente","venta_total":"Venta $",
+                        "precio_compra":"Precio Compra $","comision":"Comisión $","ganancia":"Ganancia $",
+                        "sale_date":"Fecha","cuotas":"Cuotas","estado":"Estado"
+                    })
+                    st.dataframe(inv_tbl.sort_values("ID venta", ascending=False), use_container_width=True)
+else:
+    # Si es seller, mantenemos el tab para layout
+    pass
+
+
+
 
 # --------- REPORTES KPI (AMPLIADO) ---------
 if is_admin_user:
@@ -2014,107 +1837,282 @@ if is_admin_user:
                 st.info("No hay movimientos para el mes seleccionado.")
 
 
-# --------- INVERSORES (DETALLE POR CADA UNO) ---------
-# Ocultamos la pestaña a los vendedores para no exponer datos globales
+# --------- 👤 ADMINISTRACIÓN (solo admin) ---------
 if is_admin_user:
-    with tab_inversores:
-        with card("Inversores", "🏦"):
-            st.subheader("🤝 Inversores")
+    import requests
+    import streamlit as st
 
-            ops = list_operations()
-            if not ops:
-                st.info("No hay ventas registradas todavía.")
-            else:
-                ops_df = build_ops_df(ops)
-                ins_df = build_installments_df(ops)
 
-                total_pagado_inv = float(ins_df[(ins_df["tipo"]=="COMPRA") & (ins_df["paid"]==True)]["amount"].sum())
-                total_compra = float(ops_df["precio_compra"].sum())
-                total_por_pagar_inv = total_compra - total_pagado_inv
+    with tab_admin:
+        with card("Vendedores", "🧑‍💼"):
 
-                # Ganancia inversores: 18% del costo neto para GONZA, MARTIN y TOBIAS (YO)
-                ganancia_inversores = float(
-                    ops_df.apply(lambda r: r["costo_neto"]*0.18 if (str(r["inversor"]).upper() in ("GONZA","MARTIN","TOBIAS (YO)")) else 0.0, axis=1).sum()
+            # === Alta de vendedor ===
+            st.markdown("**Alta de vendedor**")
+            c1, c2 = st.columns([3, 1])
+            with c1:
+                nuevo_vend = st.text_input(
+                    "Nombre del vendedor (tal cual querés que figure en las ventas)",
+                    key="vendor_new_name",
+                    placeholder="Ej.: Juan Pérez"
                 )
+            with c2:
+                if st.button("Agregar vendedor", type="primary", key="btn_add_vendor"):
+                    name = (nuevo_vend or "").strip()
+                    if not name:
+                        st.error("Escribí un nombre.")
+                    else:
+                        ok, msg = add_vendor(name)  # tu función existente
+                        try:
+                            url = backup_snapshot_to_github()
+                            st.success("Backup subido a GitHub ✅")
+                            if url:
+                                st.markdown(f"[Ver commit →]({url})")
+                        except Exception as e:
+                            st.warning(f"Falló el backup: {e}")
+                        (st.success if ok else st.error)(msg)
+                        if ok:
+                            st.rerun()
 
-                c1, c2, c3 = st.columns(3)
-                c1.metric("Pagado a inversores", f"${total_pagado_inv:,.2f}")
-                c2.metric("Por pagar a inversores", f"${total_por_pagar_inv:,.2f}")
-                c3.metric("Ganancia de inversores (18%)", f"${ganancia_inversores:,.2f}")
+            # separador visual
+            st.markdown("<hr style='border:0; border-top:1px solid #1f2937; margin:10px 0'>", unsafe_allow_html=True)
 
-                # --- Ganancia por inversor (desglosada) ---
-                def _ganancia_inv_para(inv_nombre: str) -> float:
-                    inv_ops = ops_df[ops_df["inversor"].fillna("").astype(str).str.upper() == inv_nombre.upper()]
-                    return float((inv_ops["costo_neto"] * 0.18).sum())
+            # === Listado y acciones ===
+            vendors_all = list_vendors(active_only=False) or []
 
-                gan_gonza  = _ganancia_inv_para("GONZA")
-                gan_martin = _ganancia_inv_para("MARTIN")
-                gan_tobias = _ganancia_inv_para("TOBIAS (YO)")
+            if len(vendors_all) == 0:
+                st.info("No hay vendedores cargados.")
+            else:
+                st.markdown("**Vendedores cargados**")
+                for v in vendors_all:
+                    cols = st.columns([5, 2, 2])
 
-                g1, g2, g3 = st.columns(3)
-                g1.metric("Ganancia GONZA (18%)", f"${gan_gonza:,.2f}")
-                g2.metric("Ganancia MARTIN (18%)", f"${gan_martin:,.2f}")
-                g3.metric("Ganancia TOBIAS (18%)", f"${gan_tobias:,.2f}")
+                    # nombre + estado (badge)
+                    estado_badge = "<span class='badge'>activo</span>" if v.get('activo', 1) == 1 else "<span class='badge badge--danger'>inactivo</span>"
+                    cols[0].markdown(f"- {v['nombre']} {estado_badge}", unsafe_allow_html=True)
 
-                st.divider()
-                st.subheader("Cuota mensual a inversores (este mes, impagas)")
-                hoy = date.today()
-                mes_actual, anio_actual = hoy.month, hoy.year
+                    # 🗑️ Eliminar (solo si no tiene ventas)
+                    if cols[1].button("Eliminar", key=f"delvend_{v['id']}"):
+                        usos = count_ops_for_vendor_name(v['nombre'])
+                        if usos > 0:
+                            st.error(f"No se puede eliminar: tiene {usos} ventas asociadas. Desactiválo en su lugar.")
+                        else:
+                            delete_vendor(v["id"])
+                            try:
+                                url = backup_snapshot_to_github()
+                                st.success("Vendedor eliminado y backup subido ✅")
+                                if url: st.markdown(f"[Ver commit →]({url})")
+                            except Exception as e:
+                                st.warning(f"Vendedor eliminado. Falló el backup: {e}")
+                            st.rerun()
 
-                cuota_mensual_total = 0.0
-                detalle = []
-                for _, r in ops_df.iterrows():
-                    op_id = int(r["id"])
-                    inv = r["inversor"]
-                    cuotas_compra = ins_df[(ins_df["operation_id"]==op_id) & (ins_df["tipo"]=="COMPRA")]
-                    for _, c in cuotas_compra.iterrows():
-                        venc = c["due_date"]
-                        if (venc.year==anio_actual and venc.month==mes_actual) and (not c["paid"]):
-                            cuota_mensual_total += float(c["amount"])
-                            detalle.append({
-                                "ID venta": op_id, "Inversor": inv, "Cuota #": int(c["idx"]),
-                                "Vence": venc.isoformat(), "Monto": float(c["amount"])
-                            })
-                st.metric("Total a pagar este mes (impago)", f"${cuota_mensual_total:,.2f}")
-                if detalle:
-                    st.dataframe(pd.DataFrame(detalle), use_container_width=True)
+                    # 🚫 Desactivar (solo si está activo)
+                    if v.get('activo', 1) == 1:
+                        if cols[2].button("Desactivar", key=f"deact_v_{v['id']}"):
+                            deactivate_vendor(v["id"])
+                            try:
+                                url = backup_snapshot_to_github()
+                                st.success("Vendedor desactivado y backup subido ✅")
+                                if url: st.markdown(f"[Ver commit →]({url})")
+                            except Exception as e:
+                                st.warning(f"Desactivado. Falló el backup: {e}")
+                            st.rerun()
+                    else:
+                        cols[2].write("")  # alineación
+
+
+            
+            
+                    st.divider()
+        st.markdown("<hr style='border:0; border-top:1px solid #1f2937; margin:10px 0'>", unsafe_allow_html=True)
+        # --- Usuarios vendedores
+        st.markdown("### 👥 Usuarios (vendedores)")
+        vend_list = list_vendors(active_only=True)
+        vend_names = [v["nombre"] for v in vend_list]
+        cu1, cu2, cu3, cu4 = st.columns([2,2,2,1])
+        with cu1:
+            u_username = st.text_input("Usuario")
+        with cu2:
+            u_password = st.text_input("Contraseña", type="password")
+        with cu3:
+            u_vendedor = st.selectbox("Vincular a vendedor", options=vend_names, index=0 if vend_names else None, placeholder="Cargá vendedores primero")
+        with cu4:
+            if st.button("Crear usuario"):
+                if not vend_names:
+                    st.error("Primero cargá al menos un vendedor.")
                 else:
-                    st.info("No hay cuotas impagas de COMPRA que venzan este mes.")
+                    ok, msg = create_user(u_username, u_password, role="seller", vendedor_nombre=u_vendedor)
+                    (st.success if ok else st.error)(msg)
+                    if ok: st.rerun()
+        
+        # Listado rápido de usuarios
+        with get_conn() as con:
+            cur = con.cursor()
+            cur.execute("SELECT username, role, vendedor FROM users ORDER BY role DESC, username ASC;")
+            rows = cur.fetchall()
+        if rows:
+            st.markdown("**Usuarios existentes**")
+            for (uname, role, vend) in rows:
+                cols = st.columns([3,2,3,2])
+                cols[0].write(uname)
+                cols[1].write(role)
+                cols[2].write(vend or "-")
+                if role != "admin":
+                    if cols[3].button("Eliminar", key=f"deluser_{uname}"):
+                        delete_user(uname)
+                        st.rerun()
 
-                st.divider()
-                st.subheader("Detalle por inversor")
-                for inv in ["GONZA", "MARTIN", "TOBIAS (YO)"]:
-                    st.markdown(f"### {inv}")
-                    inv_ops = ops_df[ops_df["inversor"].fillna("").astype(str).str.upper()==inv]
-                    if inv_ops.empty:
-                        st.info("Sin operaciones con este inversor.")
-                        continue
+        # --- Seguridad: cuenta de administrador ---
+        with st.expander("🔐 Cambiar credenciales de ADMIN"):
+            admin_uname = (st.session_state.get("user") or {}).get("username", "admin")
 
-                    inv_ins = ins_df[ins_df["inversor"].fillna("").astype(str).str.upper()==inv]
-                    inv_total_compra = float(inv_ops["precio_compra"].sum())
-                    inv_pagado = float(inv_ins[(inv_ins["tipo"]=="COMPRA") & (inv_ins["paid"]==True)]["amount"].sum())
-                    inv_pendiente = inv_total_compra - inv_pagado
-                    inv_ganancia = float((inv_ops["costo_neto"]*0.18).sum())
+            c1, c2 = st.columns(2)
+            with c1:
+                st.text_input("Usuario actual", value=admin_uname, disabled=True)
+                new_username = st.text_input("Nuevo usuario (opcional)")
+                curr_password = st.text_input("Contraseña ACTUAL", type="password")
+            with c2:
+                new_password = st.text_input("Nueva contraseña", type="password")
+                new_password2 = st.text_input("Repetir nueva contraseña", type="password")
 
-                    c1, c2, c3 = st.columns(3)
-                    c1.metric("Total comprado (con 18%)", f"${inv_total_compra:,.2f}")
-                    c2.metric("Pagado a este inversor", f"${inv_pagado:,.2f}")
-                    c3.metric("Pendiente con este inversor", f"${inv_pendiente:,.2f}")
+            b1, b2 = st.columns(2)
+            with b1:
+                if st.button("Cambiar contraseña"):
+                    if not new_password or new_password != new_password2:
+                        st.error("Las contraseñas no coinciden.")
+                    else:
+                        ok, msg = set_admin_password(admin_uname, curr_password, new_password)
+                        (st.success if ok else st.error)(msg)
+                        if ok:
+                            st.success("Volvé a iniciar sesión con la nueva contraseña.")
+                            st.session_state.clear()
+                            st.rerun()
 
-                    st.metric("A pagar este mes (impago)", f"${float(inv_ins[(inv_ins['tipo']=='COMPRA') & (inv_ins['paid']==False) & (inv_ins['due_date'].apply(lambda d: d.year==anio_actual and d.month==mes_actual))]['amount'].sum()):,.2f}")
-                    st.write(f"**Ganancia acumulada del inversor (18%)**: ${inv_ganancia:,.2f}")
+            with b2:
+                if st.button("Cambiar usuario"):
+                    if not new_username.strip():
+                        st.error("Ingresá el nuevo usuario.")
+                    else:
+                        ok, msg = rename_admin_user(admin_uname, new_username, curr_password)
+                        (st.success if ok else st.error)(msg)
+                        if ok:
+                            st.success("Volvé a iniciar sesión con el nuevo usuario.")
+                            st.session_state.clear()
+                            st.rerun()
+        with card("Backup & Restore (GitHub)", "💽"):
+            c1, c2 = st.columns(2)
+            with c1:
+                if st.button("💾 Guardar backup ahora"):
+                    try:
+                        url = backup_snapshot_to_github()
+                        st.success("Backup subido a GitHub ✅")
+                        if url: st.markdown(f"[Ver commit →]({url})")
+                    except Exception as e:
+                        st.error(f"Falló el backup: {e}")
+            with c2:
+                if st.button("♻️ Restaurar último backup"):
+                    try:
+                        restore_from_github_snapshot()
+                        st.success("Restaurado desde GitHub ✅")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"No se pudo restaurar: {e}")
+        # === Diagnóstico y prueba de Backup a GitHub ===
+            import base64, requests
+            from datetime import datetime, timezone
 
-                    st.markdown("**Operaciones asociadas**")
-                    inv_tbl = inv_ops[["id","descripcion","cliente","venta_total","precio_compra","comision","ganancia","sale_date","cuotas","estado"]].copy()
-                    inv_tbl = inv_tbl.rename(columns={
-                        "id":"ID venta","descripcion":"Descripción","cliente":"Cliente","venta_total":"Venta $",
-                        "precio_compra":"Precio Compra $","comision":"Comisión $","ganancia":"Ganancia $",
-                        "sale_date":"Fecha","cuotas":"Cuotas","estado":"Estado"
-                    })
-                    st.dataframe(inv_tbl.sort_values("ID venta", ascending=False), use_container_width=True)
-else:
-    # Si es seller, mantenemos el tab para layout
-    pass
+            st.markdown("### 🔎 Diagnóstico Backup a GitHub")
+            c1, c2 = st.columns(2)
+
+            with c1:
+                if st.button("Probar backup ahora (archivo de prueba)"):
+                    try:
+                        # 1) Chequear secrets básicos
+                        faltan = [k for k in ("GH_TOKEN","GH_REPO") if k not in st.secrets]
+                        if faltan:
+                            st.error("Faltan estos Secrets: " + ", ".join(faltan))
+                        else:
+                            st.success("Secrets OK")
+
+                        # 2) Chequear acceso al repo
+                        repo = st.secrets["GH_REPO"]
+                        branch = st.secrets.get("GH_BRANCH", "main")
+                        headers = {"Authorization": f"Bearer {st.secrets['GH_TOKEN']}",
+                                "Accept": "application/vnd.github+json"}
+
+                        r_repo = requests.get(f"https://api.github.com/repos/{repo}", headers=headers, timeout=20)
+                        if r_repo.status_code != 200:
+                            st.error(f"Repo no accesible: {r_repo.status_code} — {r_repo.text[:160]}")
+                        else:
+                            st.success("Acceso al repo OK")
+
+                        # 3) Escribir archivo de prueba
+                        ts = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+                        path = f"data/_probe_{ts}.txt"
+                        url  = f"https://api.github.com/repos/{repo}/contents/{path}"
+                        payload = {
+                            "message": f"probe {ts}",
+                            "content": base64.b64encode(f"ok {ts}".encode()).decode(),
+                            "branch": branch
+                        }
+                        r_put = requests.put(url, headers=headers, json=payload, timeout=30)
+                        if r_put.status_code in (200, 201):
+                            html = r_put.json()["content"]["html_url"]
+                            st.success(f"Escritura OK → {html}")
+                        else:
+                            st.error(f"PUT falló: {r_put.status_code} — {r_put.text[:300]}")
+
+                    except Exception as e:
+                        st.exception(e)
+
+            with c2:
+                if st.button("Forzar backup real (snapshot.json + CSVs)"):
+                    try:
+                        urls = backup_snapshot_to_github()
+                        st.success("Backup subido a GitHub ✅")
+                        for nombre, link in (urls or {}).items():
+                            st.write(f"• {nombre}: {link}")
+                    except Exception as e:
+                        st.error(f"No se pudo subir el backup: {e}")
+            st.markdown("### 📤 Exportar a Google Sheets")
+            if is_admin():
+                c1, c2, c3 = st.columns([1,1,1])
+                if c1.button("Probar conexión"):
+                    _ping_webapp()
+                if c2.button("Exportar ahora"):
+                    exportar_a_sheets_webapp_desde_sqlite(DB_PATH)  # usa tu DB_PATH = "ventas.db"
+                if c3.button("🧹 Limpiar logs"):
+                    st.session_state.export_logs.clear()
+                    st.info("Logs limpiados.")
+            else:
+                st.info("Solo un administrador puede exportar a Google Sheets.")
+
+            with st.expander("🔍 Logs de exportación (persisten en la sesión)"):
+                for line in st.session_state.export_logs[-200:]:
+                    st.text(line)
+        with card("Rescate: ventas ocultas (0 cuotas)", "🧰"):
+            ops_zero = get_ops_zero_cuotas()
+            if not ops_zero:
+                st.info("No hay ventas con 0 cuotas. ¡Todo limpio!")
+            else:
+                st.warning("Estas ventas NO tienen cuotas, por eso no aparecen en el listado. Podés eliminarlas desde acá.")
+                for op in ops_zero:
+                    c1, c2, c3, c4 = st.columns([1, 3, 2, 2])
+                    c1.markdown(f"**#{op['id']}**")
+                    c2.markdown(f"{op['descripcion']}  \n<small style='color:#9aa0a6'>Vendedor: {op['vendedor']} — {op['fecha']}</small>", unsafe_allow_html=True)
+                    pwd = c3.text_input("Contraseña", type="password", key=f"pwd_zero_{op['id']}", placeholder="totoborrar")
+                    if c4.button("Eliminar venta", key=f"btn_zero_{op['id']}"):
+                        if pwd != DELETE_SALES_PASSWORD:   # ya la tenés definida como "totoborrar"
+                            st.error("Contraseña incorrecta.")
+                        else:
+                            delete_operation(op["id"])
+                            try:
+                                backup_snapshot_to_github()
+                                st.toast("Backup subido a GitHub ✅")
+                            except Exception as e:
+                                st.warning(f"No se pudo subir el backup: {e}")
+                            st.success(f"Venta #{op['id']} eliminada ✅")
+                            st.rerun()
+
 
 # --------- 📅 CALENDARIO DE COBROS ---------
 st.markdown("### 🗓️ Calendario de cobros (cuotas impagas de VENTA)")

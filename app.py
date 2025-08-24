@@ -1078,9 +1078,10 @@ with st.sidebar:
 # =========================
 is_admin_user = is_admin()
 if is_admin_user:
-    tab_admin, tab_listar, tab_reportes, tab_inversores, tab_crear, tab_cal = st.tabs(
-        ["➕ Nueva venta", "📋 Listado & gestión", "🤝 Inversores", "📊 Reportes KPI", "👤 Administración", "📅 Calendario"]
+    tab_crear, tab_listar, tab_inversores, tab_reportes, tab_admin, tab_cal = st.tabs(
+    ["➕ Nueva venta", "📋 Listado & gestión", "🏦 Inversores", "📊 Reportes KPI", "⚙️ Administración", "📅 Calendario"]
     )
+
 else:
     tab_listar, tab_cal = st.tabs(
         ["📋 Listado & gestión", "📅 Calendario"]

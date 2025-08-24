@@ -1372,22 +1372,23 @@ with tab_listar:
                 key=f"{key_prefix}_listado_editor"
             )
 
-            # Procesar selección SIN abrir nueva pestaña y SIN loop infinito
+            # Procesar selección SIN abrir pestaña y SIN loop infinito
             try:
                 ventas = edited[edited["Tipo"] == "VENTA"]
                 marcadas = ventas[ventas["Elegir"] == True]
 
-                # selid actual en la URL (normalizado)
+                # selid actual normalizado
                 current_sel = st.query_params.get("selid")
                 if isinstance(current_sel, list):
                     current_sel = current_sel[0] if current_sel else None
 
                 if not marcadas.empty:
-                    selid = int(marcadas["ID venta"].iloc[-1])  # última marcada
-                    if str(selid) != (current_sel or ""):
-                        # Actualiza el parámetro y limpia el estado del editor para des-tildar
-                        st.query_params.update(selid=str(selid))
-                        st.session_state.pop(f"{key_prefix}_listado_editor", None)
+                    # Tomamos la última marcada como nueva selección
+                    new_selid = int(marcadas["ID venta"].iloc[-1])
+                    if str(new_selid) != (current_sel or ""):
+                        st.query_params.update(selid=str(new_selid))
+                        # No hace falta limpiar el estado: al recargar, "Elegir"
+                        # se recalcula desde current_selid y solo esa queda True.
                         st.rerun()
             except Exception:
                 pass
@@ -1406,13 +1407,24 @@ with tab_listar:
 
            # ---- Gestión de cuotas / detalle de venta ----
             # Leer ?selid de la URL (si existe)
+            # Marcar la selección actual (si hay ?selid en la URL)
             sel_param = st.query_params.get("selid")
             if isinstance(sel_param, list):
                 sel_param = sel_param[0] if sel_param else None
             try:
-                sel_from_url = int(sel_param) if sel_param else None
+                current_selid = int(sel_param) if sel_param else None
             except Exception:
-                sel_from_url = None
+                current_selid = None
+
+            # "Elegir": True solo en la VENTA seleccionada; en COMPRA queda vacío
+            def _elegir(tipo, idventa, curr):
+                if tipo == "VENTA":
+                    return bool(curr and idventa == curr)
+                return None
+
+            df_ops["Elegir"] = [
+                _elegir(t, i, current_selid) for t, i in zip(df_ops["Tipo"], df_ops["ID venta"])
+            ]
 
             # ID por defecto: primera fila VENTA visible
             ventas_ids = df_ops.loc[df_ops["Tipo"] == "VENTA", "ID venta"]

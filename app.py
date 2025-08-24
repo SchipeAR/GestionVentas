@@ -1550,37 +1550,33 @@ with tab_listar:
                         st.info("No hay cuotas de VENTA registradas.")
                     else:
                         df_qv = pd.DataFrame([{
-                        "id": c["id"],
-                        "Cuota": c["idx"],
-                        "Monto": float(c["amount"]),
-                        "Pagada": bool(c["paid"]),
-                        "Fecha pago (registrada)": c["paid_at"] or "",
-                        "Comentario": notes_orig_v.get(c["id"], "")
-                    } for c in cuotas_venta])
+                            "id": c["id"],
+                            "Cuota": c["idx"],
+                            "Monto": float(c["amount"]),
+                            "Pagada": bool(c["paid"]),
+                            "Fecha pago (registrada)": c["paid_at"] or "",
+                            "Comentario": notes_orig_v.get(c["id"], "")
+                        } for c in cuotas_venta])
 
-                    # asegurar Comentario a la derecha
-                    df_qv = df_qv[["id","Cuota","Monto","Pagada","Fecha pago (registrada)","Comentario"]]
+                        # ordenar columnas y ocultar "id" poniéndolo como índice
+                        df_qv = df_qv[["id","Cuota","Monto","Pagada","Fecha pago (registrada)","Comentario"]].set_index("id", drop=True)
+
 
 
                     edited_qv = st.data_editor(
-                            df_qv,
-                            hide_index=True,
-                            use_container_width=True,
-                            num_rows="fixed",
-                            column_config={
-                                "Pagada": st.column_config.CheckboxColumn(
-                                    "Pagada", help="Marcar si la cuota está pagada", disabled=solo_lectura
-                                ),
-                                "Monto": st.column_config.NumberColumn(
-                                    "Monto", step=0.01, format="%.2f", disabled=solo_lectura
-                                ),
-                                "Cuota": st.column_config.NumberColumn("Cuota", disabled=True),
-                                "id": st.column_config.TextColumn("id", disabled=True),
-                                "Fecha pago (registrada)": st.column_config.TextColumn("Fecha pago (registrada)", disabled=True),
-                                "Comentario": st.column_config.TextColumn("Comentario", help="Descripción / nota de esta cuota", disabled=solo_lectura),
-                            },
-                            key=f"{key_prefix}_qv_editor_{op['id']}"
-                        )
+                        df_qv,
+                        hide_index=True,
+                        use_container_width=True,
+                        num_rows="fixed",
+                        column_config={
+                            "Pagada": st.column_config.CheckboxColumn("Pagada", help="Marcar si la cuota está pagada", disabled=solo_lectura),
+                            "Monto": st.column_config.NumberColumn("Monto", step=0.01, format="%.2f", disabled=solo_lectura),
+                            "Cuota": st.column_config.NumberColumn("Cuota", disabled=True),
+                            "Fecha pago (registrada)": st.column_config.TextColumn("Fecha pago (registrada)", disabled=True),
+                            "Comentario": st.column_config.TextColumn("Comentario", help="Descripción / nota de esta cuota", placeholder="Escribí una nota…", max_chars=500, disabled=solo_lectura),
+                        },
+                        key=f"{key_prefix}_qv_editor_{op['id']}"
+                    )
 
 
                     fecha_pago_v = st.date_input(
@@ -1590,14 +1586,13 @@ with tab_listar:
                     if (not solo_lectura) and st.button("Guardar estado de cuotas VENTA", key=f"{key_prefix}_btn_pagar_v_{op['id']}"):
                         iso_v = to_iso(fecha_pago_v)
                         orig_by_id = {c["id"]: bool(c["paid"]) for c in cuotas_venta}
-                        for _, row in edited_qv.iterrows():
-                            iid = int(row["id"])
+                        for iid, row in edited_qv.iterrows():   # 👈 iid viene del índice (id oculto)
+                            iid = int(iid)
                             new_paid = bool(row["Pagada"])
                             old_paid = orig_by_id.get(iid, False)
                             if new_paid != old_paid:
                                 set_installment_paid(iid, new_paid, paid_at_iso=(iso_v if new_paid else None))
 
-                            # 👇 Guardar comentario si cambió
                             new_note = (row.get("Comentario") or "").strip()
                             if new_note != (notes_orig_v.get(iid) or ""):
                                 set_installment_note(iid, new_note, updated_at_iso=iso_v)
@@ -1629,8 +1624,8 @@ with tab_listar:
                         "Pagada": bool(c["paid"]), "Fecha pago (registrada)": c["paid_at"] or "",
                         "Comentario": notes_orig_c.get(c["id"], "")
                     } for c in cuotas_compra])
-                    df_qc = df_qc[["id","Cuota","Monto","Pagada","Fecha pago (registrada)","Comentario"]]
 
+                    df_qc = df_qc[["id","Cuota","Monto","Pagada","Fecha pago (registrada)","Comentario"]].set_index("id", drop=True)
 
                     edited_qc = st.data_editor(
                         df_qc,
@@ -1638,19 +1633,15 @@ with tab_listar:
                         use_container_width=True,
                         num_rows="fixed",
                         column_config={
-                            "Pagada": st.column_config.CheckboxColumn(
-                                "Pagada", help="Marcar si la cuota está pagada", disabled=solo_lectura
-                            ),
-                            "Monto": st.column_config.NumberColumn(
-                                "Monto", step=0.01, format="%.2f", disabled=solo_lectura
-                            ),
+                            "Pagada": st.column_config.CheckboxColumn("Pagada", help="Marcar si la cuota está pagada", disabled=solo_lectura),
+                            "Monto": st.column_config.NumberColumn("Monto", step=0.01, format="%.2f", disabled=solo_lectura),
                             "Cuota": st.column_config.NumberColumn("Cuota", disabled=True),
-                            "id": st.column_config.TextColumn("id", disabled=True),
                             "Fecha pago (registrada)": st.column_config.TextColumn("Fecha pago (registrada)", disabled=True),
-                            "Comentario": st.column_config.TextColumn("Comentario", help="Descripción / nota de esta cuota", disabled=solo_lectura),
+                            "Comentario": st.column_config.TextColumn("Comentario", help="Descripción / nota de esta cuota", placeholder="Escribí una nota…", max_chars=500, disabled=solo_lectura),
                         },
                         key=f"{key_prefix}_qc_editor_{op['id']}"
                     )
+
 
 
                     fecha_pago_c = st.date_input(
@@ -1660,14 +1651,13 @@ with tab_listar:
                     if (not solo_lectura) and st.button("Guardar estado de cuotas COMPRA", key=f"{key_prefix}_btn_pagar_c_{op['id']}"):
                         iso_c = to_iso(fecha_pago_c)
                         orig_by_id = {c["id"]: bool(c["paid"]) for c in cuotas_compra}
-                        for _, row in edited_qc.iterrows():
-                            iid = int(row["id"])
+                        for iid, row in edited_qc.iterrows():   # 👈 iid = índice oculto
+                            iid = int(iid)
                             new_paid = bool(row["Pagada"])
                             old_paid = orig_by_id.get(iid, False)
                             if new_paid != old_paid:
                                 set_installment_paid(iid, new_paid, paid_at_iso=(iso_c if new_paid else None))
 
-                            # 👇 Guardar comentario si cambió
                             new_note = (row.get("Comentario") or "").strip()
                             if new_note != (notes_orig_c.get(iid) or ""):
                                 set_installment_note(iid, new_note, updated_at_iso=iso_c)

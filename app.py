@@ -564,6 +564,24 @@ def ensure_notes_table():
             updated_at TEXT
         )""")
         con.commit()
+def fmt_dmy_from_iso(iso_val) -> str:
+    if not iso_val:
+        return ""
+    s = str(iso_val)
+    # probamos varias formas: datetime ISO, date ISO, con "T", con espacio, solo fecha
+    candidates = [s, s.split("T")[0], s.split(" ")[0]]
+    for p in candidates:
+        try:
+            # primero intentamos datetime completo
+            dt = datetime.fromisoformat(p)
+            return dt.strftime("%d/%m/%Y")
+        except Exception:
+            try:
+                d = date.fromisoformat(p)
+                return d.strftime("%d/%m/%Y")
+            except Exception:
+                pass
+    return s  # fallback sin romper si viene en otro formato
 
 def get_installment_note(iid: int) -> str:
     ensure_notes_table()
@@ -1554,7 +1572,7 @@ with tab_listar:
                             "Cuota": c["idx"],
                             "Monto": float(c["amount"]),
                             "Pagada": bool(c["paid"]),
-                            "Fecha pago (registrada)": c["paid_at"] or "",
+                            "Fecha pago (registrada)": fmt_dmy_from_iso(c["paid_at"]),
                             "Comentario": notes_orig_v.get(c["id"], "")
                         } for c in cuotas_venta])
 
@@ -1621,7 +1639,7 @@ with tab_listar:
                     else:
                         df_qc = pd.DataFrame([{
                         "id": c["id"], "Cuota": c["idx"], "Monto": float(c["amount"]),
-                        "Pagada": bool(c["paid"]), "Fecha pago (registrada)": c["paid_at"] or "",
+                        "Pagada": bool(c["paid"]),  "Fecha pago (registrada)": fmt_dmy_from_iso(c["paid_at"]),
                         "Comentario": notes_orig_c.get(c["id"], "")
                     } for c in cuotas_compra])
 

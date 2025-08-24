@@ -1094,6 +1094,38 @@ if is_admin_user:
 
     with tab_admin:
         with card("Vendedores", "🧑‍💼"):
+
+            # === Alta de vendedor ===
+            st.markdown("**Alta de vendedor**")
+            c1, c2 = st.columns([3, 1])
+            with c1:
+                nuevo_vend = st.text_input(
+                    "Nombre del vendedor (tal cual querés que figure en las ventas)",
+                    key="vendor_new_name",
+                    placeholder="Ej.: Juan Pérez"
+                )
+            with c2:
+                if st.button("Agregar vendedor", type="primary", key="btn_add_vendor"):
+                    name = (nuevo_vend or "").strip()
+                    if not name:
+                        st.error("Escribí un nombre.")
+                    else:
+                        ok, msg = add_vendor(name)  # tu función existente
+                        try:
+                            url = backup_snapshot_to_github()
+                            st.success("Backup subido a GitHub ✅")
+                            if url:
+                                st.markdown(f"[Ver commit →]({url})")
+                        except Exception as e:
+                            st.warning(f"Falló el backup: {e}")
+                        (st.success if ok else st.error)(msg)
+                        if ok:
+                            st.rerun()
+
+            # separador visual
+            st.markdown("<hr style='border:0; border-top:1px solid #1f2937; margin:10px 0'>", unsafe_allow_html=True)
+
+            # === Listado y acciones ===
             vendors_all = list_vendors(active_only=False) or []
 
             if len(vendors_all) == 0:
@@ -1107,7 +1139,7 @@ if is_admin_user:
                     estado_badge = "<span class='badge'>activo</span>" if v.get('activo', 1) == 1 else "<span class='badge badge--danger'>inactivo</span>"
                     cols[0].markdown(f"- {v['nombre']} {estado_badge}", unsafe_allow_html=True)
 
-                    # 🗑️ Eliminar (sólo si no tiene ventas)
+                    # 🗑️ Eliminar (solo si no tiene ventas)
                     if cols[1].button("Eliminar", key=f"delvend_{v['id']}"):
                         usos = count_ops_for_vendor_name(v['nombre'])
                         if usos > 0:
@@ -1122,7 +1154,7 @@ if is_admin_user:
                                 st.warning(f"Vendedor eliminado. Falló el backup: {e}")
                             st.rerun()
 
-                    # 🚫 Desactivar (sólo si está activo)
+                    # 🚫 Desactivar (solo si está activo)
                     if v.get('activo', 1) == 1:
                         if cols[2].button("Desactivar", key=f"deact_v_{v['id']}"):
                             deactivate_vendor(v["id"])
@@ -1134,8 +1166,7 @@ if is_admin_user:
                                 st.warning(f"Desactivado. Falló el backup: {e}")
                             st.rerun()
                     else:
-                        # Placeholder para alinear columnas cuando está inactivo
-                        cols[2].write("")
+                        cols[2].write("")  # alineación
 
 
             

@@ -1331,6 +1331,7 @@ with tab_listar:
 
             # ---- DataFrame y orden de columnas ----
             df_ops = pd.DataFrame(rows)
+            editor_key = f"{key_prefix}_listado_editor"
             sel_param = st.query_params.get("selid")
             if isinstance(sel_param, list):
                 sel_param = sel_param[0] if sel_param else None
@@ -1339,18 +1340,23 @@ with tab_listar:
             except Exception:
                 current_selid = None
 
-            editor_key = f"{key_prefix}_listado_editor"
+            # 2) Si cambió el selid respecto al último render, limpiar el estado del editor
             last_selid = st.session_state.get(f"{editor_key}__last_selid")
             if last_selid != current_selid:
-                st.session_state.pop(editor_key, None)  # 🔑 evita que quede tildado el anterior
+                st.session_state.pop(editor_key, None)
             st.session_state[f"{editor_key}__last_selid"] = current_selid
 
+            # 3) Construir "Elegir": True sólo para la VENTA seleccionada; COMPRA queda vacío
             def _mark(tipo, idventa, curr):
                 if tipo == "VENTA":
                     return bool(curr and idventa == curr)
                 return None
 
             df_ops["Elegir"] = [_mark(t, i, current_selid) for t, i in zip(df_ops["Tipo"], df_ops["ID venta"])]
+
+            # 4) Guardar el conjunto de IDs tildados “esperado” para detectar el casillero nuevo
+            st.session_state[f"{editor_key}__true_ids"] = {current_selid} if current_selid else set()
+
 
 
             cols_order = [
@@ -1392,26 +1398,33 @@ with tab_listar:
                 key=f"{key_prefix}_listado_editor"
             )
 
-            # Procesar selección SIN abrir pestaña y SIN loop infinito
+            # Procesar selección detectando el casillero NUEVO y sin loop infinito
             try:
                 ventas = edited[edited["Tipo"] == "VENTA"]
-                marcadas = ventas[ventas["Elegir"] == True]
+                now_true_ids = set(int(x) for x in ventas.loc[ventas["Elegir"] == True, "ID venta"])
 
-                # selid actual normalizado
+                prev_true_ids = st.session_state.get(f"{editor_key}__true_ids", set())
+                # IDs que se tildaron NUEVOS respecto del render anterior
+                new_checked = list(now_true_ids - prev_true_ids)
+
                 current_sel = st.query_params.get("selid")
                 if isinstance(current_sel, list):
                     current_sel = current_sel[0] if current_sel else None
 
-                if not marcadas.empty:
-                    # Tomamos la última marcada como nueva selección
-                    new_selid = int(marcadas["ID venta"].iloc[-1])
+                if new_checked:
+                    new_selid = int(new_checked[-1])  # el/los nuevos; tomamos el último
                     if str(new_selid) != (current_sel or ""):
                         st.query_params.update(selid=str(new_selid))
-                        # No hace falta limpiar el estado: al recargar, "Elegir"
-                        # se recalcula desde current_selid y solo esa queda True.
+                        st.session_state.pop(editor_key, None)  # limpia checks anteriores
+                        # actualizar tracking para el próximo render
+                        st.session_state[f"{editor_key}__true_ids"] = {new_selid}
                         st.rerun()
+                else:
+                    # No hubo nuevos tildados: mantener el tracking acorde al estado visible
+                    st.session_state[f"{editor_key}__true_ids"] = now_true_ids
             except Exception:
                 pass
+
 
             # ---- Gestión de cuotas / detalle de venta ----
             # Tomar ?selid de la URL si existe

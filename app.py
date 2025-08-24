@@ -1331,15 +1331,15 @@ with tab_listar:
 
             # ---- DataFrame y orden de columnas ----
             df_ops = pd.DataFrame(rows)
-            # link que selecciona el ID al hacer click
-            df_ops["Seleccionar"] = df_ops["ID venta"].apply(lambda i: f"?selid={int(i)}")
+            df_ops["Elegir"] = df_ops["Tipo"].apply(lambda t: False if t == "VENTA" else None)
 
             cols_order = [
-                "Tipo","ID venta","Seleccionar","Descripción","Cliente","Proveedor","Inversor","Vendedor","Revendedor","Costo",
+                "Elegir","ID venta","Tipo","Descripción","Cliente","Proveedor","Inversor","Vendedor","Revendedor","Costo",
                 "Precio Compra","Venta","Comisión","Comisión x cuota","Cuotas",
                 "Cuotas pendientes","$ Pagado","$ Pendiente","Estado","Fecha de cobro","Ganancia"
             ]
             df_ops = df_ops[cols_order]
+
 
 
             # ---- Mostrar tabla (ocultar columnas a vendedores) ----
@@ -1349,6 +1349,39 @@ with tab_listar:
                 df_show = df_ops.drop(columns=cols_hide)
             else:
                 df_show = df_ops
+
+            # Configuración de columnas: todo solo lectura excepto "Elegir"
+            colcfg = {"Elegir": st.column_config.CheckboxColumn(
+                label="Elegir",
+                help="Selecciona esta VENTA",
+                default=False
+            )}
+            for col in df_show.columns:
+                if col == "Elegir":
+                    continue
+                # Mostrar texto/solo lectura para el resto de columnas
+                colcfg[col] = st.column_config.TextColumn(col, disabled=True)
+
+            edited = st.data_editor(
+                df_show,
+                hide_index=True,
+                use_container_width=True,
+                num_rows="fixed",
+                column_config=colcfg,
+                key=f"{key_prefix}_listado_editor"
+            )
+
+            # Si marcaron "Elegir" en alguna fila VENTA, tomar ese ID y actualizar la URL sin abrir pestaña
+            try:
+                ventas = edited[edited["Tipo"] == "VENTA"]
+                marcadas = ventas[ventas["Elegir"] == True]
+                if not marcadas.empty:
+                    selid = int(marcadas["ID venta"].iloc[-1])  # última marcada
+                    st.query_params.update(selid=str(selid))
+                    st.rerun()
+            except Exception:
+                pass
+
 
             st.dataframe(
                 df_show,

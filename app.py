@@ -554,6 +554,32 @@ def get_ops_zero_cuotas():
             fecha = r[3] if len(r) > 3 else ""
             out.append({"id": rid, "descripcion": str(desc or ""), "vendedor": str(vend or ""), "fecha": str(fecha or "")})
         return out
+# === Notas por cuota (persistentes en la DB) ===
+def ensure_notes_table():
+    with get_conn() as con:
+        con.execute("""
+        CREATE TABLE IF NOT EXISTS installment_notes(
+            iid INTEGER PRIMARY KEY,
+            note TEXT NOT NULL DEFAULT '',
+            updated_at TEXT
+        )""")
+        con.commit()
+
+def get_installment_note(iid: int) -> str:
+    ensure_notes_table()
+    with get_conn() as con:
+        row = con.execute("SELECT note FROM installment_notes WHERE iid = ?", (iid,)).fetchone()
+        return row[0] if row else ""
+
+def set_installment_note(iid: int, note: str, updated_at_iso: str | None = None):
+    ensure_notes_table()
+    with get_conn() as con:
+        con.execute("""
+        INSERT INTO installment_notes (iid, note, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(iid) DO UPDATE SET note=excluded.note, updated_at=excluded.updated_at
+        """, (iid, note, updated_at_iso or to_iso(date.today())))
+        con.commit()
 
 def init_db():
     with get_conn() as con:
@@ -1518,15 +1544,25 @@ with tab_listar:
                         st.info("Solo un administrador puede registrar/editar cuotas. Visualización en modo lectura.")
 
                     cuotas_venta = list_installments(op["id"], is_purchase=False)
+                    ensure_notes_table()
+                    notes_orig_v = {c["id"]: get_installment_note(c["id"]) for c in cuotas_venta}
                     if not cuotas_venta:
                         st.info("No hay cuotas de VENTA registradas.")
                     else:
                         df_qv = pd.DataFrame([{
-                            "id": c["id"], "Cuota": c["idx"], "Monto": float(c["amount"]),
-                            "Pagada": bool(c["paid"]), "Fecha pago (registrada)": c["paid_at"] or ""
-                        } for c in cuotas_venta])
+                        "id": c["id"],
+                        "Cuota": c["idx"],
+                        "Monto": float(c["amount"]),
+                        "Pagada": bool(c["paid"]),
+                        "Fecha pago (registrada)": c["paid_at"] or "",
+                        "Comentario": notes_orig_v.get(c["id"], "")
+                    } for c in cuotas_venta])
 
-                        edited_qv = st.data_editor(
+                    # asegurar Comentario a la derecha
+                    df_qv = df_qv[["id","Cuota","Monto","Pagada","Fecha pago (registrada)","Comentario"]]
+
+
+                    edited_qv = st.data_editor(
                             df_qv,
                             hide_index=True,
                             use_container_width=True,
@@ -1541,34 +1577,41 @@ with tab_listar:
                                 "Cuota": st.column_config.NumberColumn("Cuota", disabled=True),
                                 "id": st.column_config.TextColumn("id", disabled=True),
                                 "Fecha pago (registrada)": st.column_config.TextColumn("Fecha pago (registrada)", disabled=True),
+                                "Comentario": st.column_config.TextColumn("Comentario", help="Descripción / nota de esta cuota", disabled=solo_lectura),
                             },
                             key=f"{key_prefix}_qv_editor_{op['id']}"
                         )
 
-                        fecha_pago_v = st.date_input(
+
+                    fecha_pago_v = st.date_input(
                             "Fecha de cobro a registrar (para las que marques como pagas)",
                             value=date.today(), key=f"{key_prefix}_fpv_{op['id']}"
                         )
-                        if (not solo_lectura) and st.button("Guardar estado de cuotas VENTA", key=f"{key_prefix}_btn_pagar_v_{op['id']}"):
-                            iso_v = to_iso(fecha_pago_v)
-                            orig_by_id = {c["id"]: bool(c["paid"]) for c in cuotas_venta}
-                            for _, row in edited_qv.iterrows():
-                                iid = int(row["id"])
-                                new_paid = bool(row["Pagada"])
-                                old_paid = orig_by_id.get(iid, False)
-                                if new_paid != old_paid:
-                                    set_installment_paid(iid, new_paid, paid_at_iso=(iso_v if new_paid else None))
-                            recalc_status_for_operation(op["id"])
-                            # backup (si tenés opción B activa)                    
-                            st.success("Cuotas de VENTA actualizadas.")
-                            try:
-                                url = backup_snapshot_to_github()
-                                st.success("Backup subido a GitHub ✅")
-                                if url: st.markdown(f"[Ver commit →]({url})")
-                            except Exception as e:
-                                st.error(f"Falló el backup: {e}")
-                            st.rerun()
+                    if (not solo_lectura) and st.button("Guardar estado de cuotas VENTA", key=f"{key_prefix}_btn_pagar_v_{op['id']}"):
+                        iso_v = to_iso(fecha_pago_v)
+                        orig_by_id = {c["id"]: bool(c["paid"]) for c in cuotas_venta}
+                        for _, row in edited_qv.iterrows():
+                            iid = int(row["id"])
+                            new_paid = bool(row["Pagada"])
+                            old_paid = orig_by_id.get(iid, False)
+                            if new_paid != old_paid:
+                                set_installment_paid(iid, new_paid, paid_at_iso=(iso_v if new_paid else None))
 
+                            # 👇 Guardar comentario si cambió
+                            new_note = (row.get("Comentario") or "").strip()
+                            if new_note != (notes_orig_v.get(iid) or ""):
+                                set_installment_note(iid, new_note, updated_at_iso=iso_v)
+
+                        recalc_status_for_operation(op["id"])
+                        st.success("Cuotas de VENTA actualizadas.")
+                        try:
+                            url = backup_snapshot_to_github()
+                            st.success("Backup subido a GitHub ✅")
+                            if url: st.markdown(f"[Ver commit →]({url})")
+                        except Exception as e:
+                            st.error(f"Falló el backup: {e}")
+                        st.rerun()
+    
                 # --- Cuotas de COMPRA (pagos al inversor) ---
                 with st.expander("💸 Pagos al inversor — COMPRA", expanded=False):
                     solo_lectura = not is_admin()
@@ -1576,55 +1619,69 @@ with tab_listar:
                         st.info("Solo un administrador puede registrar/editar cuotas. Visualización en modo lectura.")
 
                     cuotas_compra = list_installments(op["id"], is_purchase=True)
+                    ensure_notes_table()
+                    notes_orig_c = {c["id"]: get_installment_note(c["id"]) for c in cuotas_compra}
                     if not cuotas_compra:
                         st.info("No hay cuotas de COMPRA registradas.")
                     else:
                         df_qc = pd.DataFrame([{
-                            "id": c["id"], "Cuota": c["idx"], "Monto": float(c["amount"]),
-                            "Pagada": bool(c["paid"]), "Fecha pago (registrada)": c["paid_at"] or ""
-                        } for c in cuotas_compra])
+                        "id": c["id"], "Cuota": c["idx"], "Monto": float(c["amount"]),
+                        "Pagada": bool(c["paid"]), "Fecha pago (registrada)": c["paid_at"] or "",
+                        "Comentario": notes_orig_c.get(c["id"], "")
+                    } for c in cuotas_compra])
+                    df_qc = df_qc[["id","Cuota","Monto","Pagada","Fecha pago (registrada)","Comentario"]]
 
-                        edited_qc = st.data_editor(
-                            df_qc,
-                            hide_index=True,
-                            use_container_width=True,
-                            num_rows="fixed",
-                            column_config={
-                                "Pagada": st.column_config.CheckboxColumn(
-                                    "Pagada", help="Marcar si la cuota está pagada", disabled=solo_lectura
-                                ),
-                                "Monto": st.column_config.NumberColumn(
-                                    "Monto", step=0.01, format="%.2f", disabled=solo_lectura
-                                ),
-                                "Cuota": st.column_config.NumberColumn("Cuota", disabled=True),
-                                "id": st.column_config.TextColumn("id", disabled=True),
-                                "Fecha pago (registrada)": st.column_config.TextColumn("Fecha pago (registrada)", disabled=True),
-                            },
-                            key=f"{key_prefix}_qc_editor_{op['id']}"
-                        )
 
-                        fecha_pago_c = st.date_input(
+                    edited_qc = st.data_editor(
+                        df_qc,
+                        hide_index=True,
+                        use_container_width=True,
+                        num_rows="fixed",
+                        column_config={
+                            "Pagada": st.column_config.CheckboxColumn(
+                                "Pagada", help="Marcar si la cuota está pagada", disabled=solo_lectura
+                            ),
+                            "Monto": st.column_config.NumberColumn(
+                                "Monto", step=0.01, format="%.2f", disabled=solo_lectura
+                            ),
+                            "Cuota": st.column_config.NumberColumn("Cuota", disabled=True),
+                            "id": st.column_config.TextColumn("id", disabled=True),
+                            "Fecha pago (registrada)": st.column_config.TextColumn("Fecha pago (registrada)", disabled=True),
+                            "Comentario": st.column_config.TextColumn("Comentario", help="Descripción / nota de esta cuota", disabled=solo_lectura),
+                        },
+                        key=f"{key_prefix}_qc_editor_{op['id']}"
+                    )
+
+
+                    fecha_pago_c = st.date_input(
                             "Fecha de pago al inversor a registrar (para las que marques como pagas)",
                             value=date.today(), key=f"{key_prefix}_fpc_{op['id']}"
                         )
-                        if (not solo_lectura) and st.button("Guardar estado de cuotas COMPRA", key=f"{key_prefix}_btn_pagar_c_{op['id']}"):
-                            iso_c = to_iso(fecha_pago_c)
-                            orig_by_id = {c["id"]: bool(c["paid"]) for c in cuotas_compra}
-                            for _, row in edited_qc.iterrows():
-                                iid = int(row["id"])
-                                new_paid = bool(row["Pagada"])
-                                old_paid = orig_by_id.get(iid, False)
-                                if new_paid != old_paid:
-                                    set_installment_paid(iid, new_paid, paid_at_iso=(iso_c if new_paid else None))
-                            recalc_status_for_operation(op["id"])
-                            st.success("Cuotas de COMPRA actualizadas.")
-                            try:
-                                url = backup_snapshot_to_github()
-                                st.success("Backup subido a GitHub ✅")
-                                if url: st.markdown(f"[Ver commit →]({url})")
-                            except Exception as e:
-                                st.error(f"Falló el backup: {e}")
-                            st.rerun()
+                    if (not solo_lectura) and st.button("Guardar estado de cuotas COMPRA", key=f"{key_prefix}_btn_pagar_c_{op['id']}"):
+                        iso_c = to_iso(fecha_pago_c)
+                        orig_by_id = {c["id"]: bool(c["paid"]) for c in cuotas_compra}
+                        for _, row in edited_qc.iterrows():
+                            iid = int(row["id"])
+                            new_paid = bool(row["Pagada"])
+                            old_paid = orig_by_id.get(iid, False)
+                            if new_paid != old_paid:
+                                set_installment_paid(iid, new_paid, paid_at_iso=(iso_c if new_paid else None))
+
+                            # 👇 Guardar comentario si cambió
+                            new_note = (row.get("Comentario") or "").strip()
+                            if new_note != (notes_orig_c.get(iid) or ""):
+                                set_installment_note(iid, new_note, updated_at_iso=iso_c)
+
+                        recalc_status_for_operation(op["id"])
+                        st.success("Cuotas de COMPRA actualizadas.")
+                        try:
+                            url = backup_snapshot_to_github()
+                            st.success("Backup subido a GitHub ✅")
+                            if url: st.markdown(f"[Ver commit →]({url})")
+                        except Exception as e:
+                            st.error(f"Falló el backup: {e}")
+                        st.rerun()
+
 
                 # --- Editar venta ---
                 with st.expander("✏️ Editar datos de la venta"):

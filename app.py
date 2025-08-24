@@ -135,6 +135,26 @@ def load_css():
 # ¡Llamalo!
 load_css()
 
+st.markdown("""
+<style>
+.pill, .bar-wrap { display: none !important; }
+</style>
+""", unsafe_allow_html=True)
+
+st.markdown("""
+<style>
+.cal .chips, .cal .chip { display: none !important; }
+</style>
+""", unsafe_allow_html=True)
+
+st.markdown("""
+<style>
+.pill { background: rgba(255,255,255,.06) !important; border-color: rgba(255,255,255,.12) !important; }
+.bar-wrap { background: rgba(255,255,255,.10) !important; }
+</style>
+""", unsafe_allow_html=True)
+
+
 # ⇩⇩ Pegar debajo de load_css() ⇩⇩
 st.markdown("""
 <style>

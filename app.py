@@ -17,6 +17,17 @@ import time
 
 st.set_page_config(layout="wide")
 
+st.markdown("""
+<style>
+/* Ancho total y menos padding lateral */
+.block-container {
+  max-width: 100% !important;
+  padding-left: 0.8rem !important;
+  padding-right: 0.8rem !important;
+}
+</style>
+""", unsafe_allow_html=True)
+
 def load_css():
     st.markdown("""
     <style>

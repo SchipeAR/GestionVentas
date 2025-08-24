@@ -1120,7 +1120,13 @@ if is_admin_user:
                 st.warning("No hay vendedores cargados. Cargá uno desde 👤 Administración.")
 
             with st.form("form_crear_venta", clear_on_submit=True):
-                inversor = st.select_slider("Inversor", options=INVERSORES, value="GONZA", key="crear_inversor")
+                inversor = st.selectbox(
+                    "Inversor",
+                    options=INVERSORES,
+                    index=(INVERSORES.index("GONZA") if "GONZA" in INVERSORES else 0),
+                    key="crear_inversor",
+                    placeholder="Elegí un inversor")                       
+
 
                 # ahora elegís del listado de vendedores existentes
                 vendedor = st.selectbox(

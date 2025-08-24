@@ -1573,7 +1573,7 @@ with tab_listar:
                             "Monto": st.column_config.NumberColumn("Monto", step=0.01, format="%.2f", disabled=solo_lectura),
                             "Cuota": st.column_config.NumberColumn("Cuota", disabled=True),
                             "Fecha pago (registrada)": st.column_config.TextColumn("Fecha pago (registrada)", disabled=True),
-                            "Comentario": st.column_config.TextColumn("Comentario", help="Descripción / nota de esta cuota", placeholder="Escribí una nota…", max_chars=500, disabled=solo_lectura),
+                            "Comentario": st.column_config.TextColumn("Comentario", help="Descripción / nota de esta cuota", max_chars=500, disabled=solo_lectura),
                         },
                         key=f"{key_prefix}_qv_editor_{op['id']}"
                     )
@@ -1637,7 +1637,7 @@ with tab_listar:
                             "Monto": st.column_config.NumberColumn("Monto", step=0.01, format="%.2f", disabled=solo_lectura),
                             "Cuota": st.column_config.NumberColumn("Cuota", disabled=True),
                             "Fecha pago (registrada)": st.column_config.TextColumn("Fecha pago (registrada)", disabled=True),
-                            "Comentario": st.column_config.TextColumn("Comentario", help="Descripción / nota de esta cuota", placeholder="Escribí una nota…", max_chars=500, disabled=solo_lectura),
+                            "Comentario": st.column_config.TextColumn("Comentario", help="Descripción / nota de esta cuota", max_chars=500, disabled=solo_lectura),
                         },
                         key=f"{key_prefix}_qc_editor_{op['id']}"
                     )

@@ -1326,9 +1326,9 @@ with tab_listar:
             # ---- DataFrame y orden de columnas ----
             df_ops = pd.DataFrame(rows)
             cols_order = [
-                "ID venta","Tipo","Descripción","Cliente","Proveedor","Inversor","Vendedor","Revendedor","Costo",
+                "ID venta","Tipo","Descripción","Cliente","Inversor","Vendedor","Revendedor","Costo",
                 "Precio Compra","Venta","Comisión","Comisión x cuota","Cuotas",
-                "Cuotas pendientes","$ Pagado","$ Pendiente","Fecha de cobro","Ganancia","Estado"
+                "Cuotas pendientes","$ Pagado","$ Pendiente","Fecha de cobro","Ganancia","Proveedor","Estado"
             ]
             df_ops = df_ops[cols_order]
 
@@ -1338,7 +1338,7 @@ with tab_listar:
                 df_show = df_ops.drop(columns=cols_hide)
             else:
                 df_show = df_ops
-            st.dataframe(df_show, use_container_width=True)
+            st.dataframe(df_show, use_container_width=True, hide_index=True)
 
             # ---- Gestión de cuotas / detalle de venta ----
             selected_id = st.number_input(

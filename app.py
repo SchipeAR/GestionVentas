@@ -1331,7 +1331,27 @@ with tab_listar:
 
             # ---- DataFrame y orden de columnas ----
             df_ops = pd.DataFrame(rows)
-            df_ops["Elegir"] = df_ops["Tipo"].apply(lambda t: False if t == "VENTA" else None)
+            sel_param = st.query_params.get("selid")
+            if isinstance(sel_param, list):
+                sel_param = sel_param[0] if sel_param else None
+            try:
+                current_selid = int(sel_param) if sel_param else None
+            except Exception:
+                current_selid = None
+
+            editor_key = f"{key_prefix}_listado_editor"
+            last_selid = st.session_state.get(f"{editor_key}__last_selid")
+            if last_selid != current_selid:
+                st.session_state.pop(editor_key, None)  # 🔑 evita que quede tildado el anterior
+            st.session_state[f"{editor_key}__last_selid"] = current_selid
+
+            def _mark(tipo, idventa, curr):
+                if tipo == "VENTA":
+                    return bool(curr and idventa == curr)
+                return None
+
+            df_ops["Elegir"] = [_mark(t, i, current_selid) for t, i in zip(df_ops["Tipo"], df_ops["ID venta"])]
+
 
             cols_order = [
                 "Elegir","ID venta","Tipo","Descripción","Cliente","Proveedor","Inversor","Vendedor","Revendedor","Costo",

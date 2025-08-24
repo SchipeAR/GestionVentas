@@ -1279,7 +1279,7 @@ with tab_listar:
                     "Descripción": op.get("descripcion"),
                     "Cliente": op.get("cliente"),
                     "Proveedor": op.get("proveedor") or "",
-                    "Inversor": op.get("nombre"),
+                    "Inversor": "↓",
                     "Vendedor": op.get("zona"),
                     "Revendedor": op.get("revendedor") or "",
                     "Costo": fmt_money_up(costo_neto),
@@ -1319,7 +1319,7 @@ with tab_listar:
                     "$ Pagado": fmt_money_up(pagado_compra),
                     "$ Pendiente": fmt_money_up(pendiente_compra),
                     "Estado": estado_compra,
-                    "Fecha de cobro": fmt_date_dmy(fecha_mostrar),
+                    "Fecha de cobro": up_arrow_if_empty(""),
                     "Ganancia": up_arrow_if_empty(""),
                 })
 

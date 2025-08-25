@@ -28,6 +28,64 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+import re
+import pandas as pd
+
+def _local_answer(prompt: str, df: pd.DataFrame) -> str | None:
+    if df is None or len(df) == 0:
+        return None
+    p = prompt.lower()
+
+    # venta #ID o id 123
+    m = re.search(r"(?:venta|id)\s*#?\s*(\d+)", p)
+    if m and "ID venta" in df.columns:
+        vid = int(m.group(1))
+        fila = df[(df["Tipo"] == "VENTA") & (df["ID venta"] == vid)]
+        if not fila.empty:
+            r = fila.iloc[0].to_dict()
+            return (
+                f"**Venta #{vid}** — {r.get('Descripción','')}\n"
+                f"- Cliente: {r.get('Cliente','')}\n"
+                f"- Inversor: {r.get('Inversor','')}\n"
+                f"- Vendedor: {r.get('Vendedor','')}\n"
+                f"- Cuotas: {r.get('Cuotas','')} | Pendientes: {r.get('Cuotas pendientes','')}\n"
+                f"- $ Pagado: {r.get('$ Pagado','')} | $ Pendiente: {r.get('$ Pendiente','')}\n"
+                f"- Estado: {r.get('Estado','')} | Fecha de cobro: {r.get('Fecha de cobro','')}"
+            )
+        # fallback a la DB si no está en la tabla por filtros
+        try:
+            op = get_operation(vid)
+            if op:
+                total_cuotas = int(op.get("O") or 0)
+                venta_total  = float(op.get("N") or 0.0)
+                y_venta      = sum_paid(vid, is_purchase=False)
+                pendientes_v = max(total_cuotas - count_paid_installments(vid, is_purchase=False), 0)
+                return (
+                    f"**Venta #{vid}** — {op.get('descripcion','')}\n"
+                    f"- Cliente: {op.get('cliente','')}\n"
+                    f"- Inversor: {op.get('nombre','')}\n"
+                    f"- Vendedor: {op.get('zona','')}\n"
+                    f"- Total venta: {venta_total:.2f} | Cobrado: {y_venta:.2f}\n"
+                    f"- Cuotas: {total_cuotas} | Pendientes: {pendientes_v}\n"
+                    f"- Estado: {op.get('estado','')}"
+                )
+        except Exception:
+            pass
+        return f"No encontré la venta #{vid}."
+
+    # ejemplo: listar vigentes
+    if "vigente" in p and "Estado" in df.columns:
+        res = df[(df["Tipo"]=="VENTA") & (df["Estado"].astype(str).str.contains("VIGENTE", na=False))]
+        if not res.empty:
+            # mostrar hasta 30 filas y avisar si hay más
+            maxn = 30
+            out = res.head(maxn)[["ID venta","Descripción","Cliente","$ Pendiente","Cuotas pendientes"]].to_markdown(index=False)
+            extra = "" if len(res) <= maxn else f"\n_(y {len(res)-maxn} más...)_"
+            return f"**Ventas vigentes (primeras {min(len(res),maxn)}):**\n\n{out}{extra}"
+        return "No hay ventas vigentes."
+    return None
+
+
 def _groq_client():
     return Groq(api_key=st.secrets.get("GROQ_API_KEY") or os.environ.get("GROQ_API_KEY"))
 
@@ -49,44 +107,37 @@ def groq_stream(messages, model="llama-3.1-8b-instant"):
             yield delta
 
 def render_asistente_groq(key_prefix="chat", model="llama-3.1-8b-instant", data_key_prefix=None):
-    """Chat simple con historial + streaming."""
     hist_key = f"{key_prefix}_history"
     if hist_key not in st.session_state:
-        st.session_state[hist_key] = [{
-            "role":"system",
-            "content":"Sos un asistente breve y práctico para esta app de gestión de ventas. Respondé en español rioplatense."
-        }]
+        st.session_state[hist_key] = [{"role":"system","content":"Sos un asistente breve y práctico para esta app de gestión. Respondé en español rioplatense."}]
 
-    # (Opcional) Inyectar snapshot mínimo de tablas si las guardamos en session_state:
-    if data_key_prefix:
-        df_main = st.session_state.get(f"{data_key_prefix}_tabla_principal")
-        if df_main is not None and len(df_main) > 0 and not st.session_state.get(f"{hist_key}_snap_done"):
-            # mandamos un preview CSV (hasta 20 filas) como contexto
-            cols = [c for c in ["ID venta","Tipo","Descripción","Cliente","Proveedor","Inversor","Vendedor",
-                                "Cuotas","Cuotas pendientes","$ Pagado","$ Pendiente","Estado","Fecha de cobro"]
-                    if c in df_main.columns]
-            try:
-                snap = df_main[cols].head(20).to_csv(index=False)
-                st.session_state[hist_key].append({"role":"system","content": "Vista tabla principal:\n"+snap})
-                st.session_state[f"{hist_key}_snap_done"] = True
-            except Exception:
-                pass
+    # 🔹 Traer la tabla COMPLETA desde session_state
+    df_main = st.session_state.get(f"{data_key_prefix}_tabla_principal") if data_key_prefix else None
 
-    # Mostrar historial
+    # (Eliminá cualquier bloque que hacía head(20)/snapshot)
+
+    # Mostrar historial...
     for m in st.session_state[hist_key]:
         if m["role"] in ("user","assistant"):
             with st.chat_message(m["role"]):
                 st.write(m["content"])
 
-    # Input
-    prompt = st.chat_input("Escribí tu consulta…", key=f"{key_prefix}_input")   
+    prompt = st.chat_input("Escribí tu consulta…", key=f"{key_prefix}_input")
     if not prompt:
         return
     st.session_state[hist_key].append({"role":"user","content":prompt})
     with st.chat_message("user"):
         st.write(prompt)
 
-    # Respuesta (stream)
+    # 🔹 Primero intentamos responder localmente con TODO el df
+    local = _local_answer(prompt, df_main)
+    if local:
+        with st.chat_message("assistant"):
+            st.markdown(local)
+        st.session_state[hist_key].append({"role":"assistant","content":local})
+        return
+
+    # 🔹 Si no hay respuesta local, recién llamamos a Groq (stream)
     out = []
     with st.chat_message("assistant"):
         ph = st.empty()
@@ -97,6 +148,7 @@ def render_asistente_groq(key_prefix="chat", model="llama-3.1-8b-instant", data_
         except Exception as e:
             ph.write(f"Error: {e}")
     st.session_state[hist_key].append({"role":"assistant","content":"".join(out).strip()})
+
 
 def load_css():
     st.markdown("""

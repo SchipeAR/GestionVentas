@@ -13,7 +13,7 @@ import hashlib
 import json
 import urllib.parse
 import time
-
+from groq import Groq
 
 st.set_page_config(layout="wide")
 
@@ -27,6 +27,76 @@ st.markdown("""
 }
 </style>
 """, unsafe_allow_html=True)
+
+def _groq_client():
+    return Groq(api_key=st.secrets.get("GROQ_API_KEY") or os.environ.get("GROQ_API_KEY"))
+
+def groq_stream(messages, model="llama-3.1-8b-instant"):
+    """
+    messages = [{"role":"system|user|assistant","content":"..."}]
+    Stream de texto incremental del modelo.
+    """
+    client = _groq_client()
+    resp = client.chat.completions.create(
+        model=model,              # p.ej. "llama-3.1-8b-instant" o "llama-3.3-70b-versatile"
+        messages=messages,
+        stream=True,
+        temperature=0.2,
+    )
+    for chunk in resp:
+        delta = chunk.choices[0].delta.content or ""
+        if delta:
+            yield delta
+
+def render_asistente_groq(key_prefix="chat", model="llama-3.1-8b-instant", data_key_prefix=None):
+    """Chat simple con historial + streaming."""
+    hist_key = f"{key_prefix}_history"
+    if hist_key not in st.session_state:
+        st.session_state[hist_key] = [{
+            "role":"system",
+            "content":"Sos un asistente breve y práctico para esta app de gestión de ventas. Respondé en español rioplatense."
+        }]
+
+    # (Opcional) Inyectar snapshot mínimo de tablas si las guardamos en session_state:
+    if data_key_prefix:
+        df_main = st.session_state.get(f"{data_key_prefix}_tabla_principal")
+        if df_main is not None and len(df_main) > 0 and not st.session_state.get(f"{hist_key}_snap_done"):
+            # mandamos un preview CSV (hasta 20 filas) como contexto
+            cols = [c for c in ["ID venta","Tipo","Descripción","Cliente","Proveedor","Inversor","Vendedor",
+                                "Cuotas","Cuotas pendientes","$ Pagado","$ Pendiente","Estado","Fecha de cobro"]
+                    if c in df_main.columns]
+            try:
+                snap = df_main[cols].head(20).to_csv(index=False)
+                st.session_state[hist_key].append({"role":"system","content": "Vista tabla principal:\n"+snap})
+                st.session_state[f"{hist_key}_snap_done"] = True
+            except Exception:
+                pass
+
+    # Mostrar historial
+    for m in st.session_state[hist_key]:
+        if m["role"] in ("user","assistant"):
+            with st.chat_message(m["role"]):
+                st.write(m["content"])
+
+    # Input
+    prompt = st.chat_input("Escribí tu consulta…")
+    if not prompt:
+        return
+    st.session_state[hist_key].append({"role":"user","content":prompt})
+    with st.chat_message("user"):
+        st.write(prompt)
+
+    # Respuesta (stream)
+    out = []
+    with st.chat_message("assistant"):
+        ph = st.empty()
+        try:
+            for piece in groq_stream(st.session_state[hist_key], model=model):
+                out.append(piece)
+                ph.markdown("".join(out))
+        except Exception as e:
+            ph.write(f"Error: {e}")
+    st.session_state[hist_key].append({"role":"assistant","content":"".join(out).strip()})
 
 def load_css():
     st.markdown("""
@@ -1430,6 +1500,9 @@ with tab_listar:
             else:
                 df_show = df_ops
 
+            # después de calcular df_show (lo que estás renderizando)
+            st.session_state[f"{key_prefix}_tabla_principal"] = df_ops.copy()
+
             # Config: checkbox solo en VENTA (en COMPRA queda en blanco)
             colcfg = {
                 "Elegir": st.column_config.CheckboxColumn(
@@ -1801,6 +1874,19 @@ with tab_listar:
 
             else:
                 st.info("Seleccioná un ID de venta para ver el detalle.")
+            
+            with st.expander("🤖 Asistente (Groq)", expanded=False):
+                modelo = st.selectbox(
+                    "Modelo",
+                    ["llama-3.1-8b-instant", "llama-3.3-70b-versatile"],
+                    index=0,
+                    key=f"{key_prefix}_groq_model"
+                )
+                render_asistente_groq(
+                    key_prefix=f"{key_prefix}_chat",
+                    model=modelo,
+                    data_key_prefix=key_prefix  # para que tome las tablas guardadas (ver paso 4)
+                )
 
         # ---- Render de cada lista en su pestaña ----
         with tabs[0]:

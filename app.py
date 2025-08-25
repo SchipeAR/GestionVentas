@@ -79,7 +79,7 @@ def render_asistente_groq(key_prefix="chat", model="llama-3.1-8b-instant", data_
                 st.write(m["content"])
 
     # Input
-    prompt = st.chat_input("Escribí tu consulta…")
+    prompt = st.chat_input("Escribí tu consulta…", key=f"{key_prefix}_input")   
     if not prompt:
         return
     st.session_state[hist_key].append({"role":"user","content":prompt})

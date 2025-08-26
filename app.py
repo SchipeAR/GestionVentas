@@ -1901,14 +1901,7 @@ if is_admin_user:
                     st.metric("A pagar este mes (impago)", f"${float(inv_ins[(inv_ins['tipo']=='COMPRA') & (inv_ins['paid']==False) & (inv_ins['due_date'].apply(lambda d: d.year==anio_actual and d.month==mes_actual))]['amount'].sum()):,.2f}")
                     st.write(f"**Ganancia acumulada del inversor (18%)**: ${inv_ganancia:,.2f}")
 
-                    st.markdown("**Operaciones asociadas**")
-                    inv_tbl = inv_ops[["id","descripcion","cliente","venta_total","precio_compra","comision","ganancia","sale_date","cuotas","estado"]].copy()
-                    inv_tbl = inv_tbl.rename(columns={
-                        "id":"ID venta","descripcion":"Descripción","cliente":"Cliente","venta_total":"Venta $",
-                        "precio_compra":"Precio Compra $","comision":"Comisión $","ganancia":"Ganancia $",
-                        "sale_date":"Fecha","cuotas":"Cuotas","estado":"Estado"
-                    })
-                    st.dataframe(inv_tbl.sort_values("ID venta", ascending=False), use_container_width=True)
+                    
 else:
     # Si es seller, mantenemos el tab para layout
     pass

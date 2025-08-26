@@ -1188,53 +1188,41 @@ if is_admin_user:
 
             with st.form("form_crear_venta", clear_on_submit=True):
                 # Elegir inversor (si todavía no lo cambiaste a selectbox, hacelo)
-                inversor = st.selectbox("Inversor", options=INVERSORES,
-                                        index=(INVERSORES.index("GONZA") if "GONZA" in INVERSORES else 0),
-                                        key="crear_inversor")
+                # Elegir inversor
+                inversor = st.selectbox(
+                    "Inversor",
+                    options=INVERSORES,
+                    index=(INVERSORES.index("GONZA") if "GONZA" in INVERSORES else 0),
+                    key="crear_inversor"
+                )
 
-                # Porcentaje del inversor (editable, por defecto 18%)
+                # % del inversor editable (default 18%)
                 inv_pct_ui = st.number_input(
                     "Porcentaje del inversor (%)",
                     min_value=0.0, max_value=100.0, step=0.1, value=18.0,
                     key="crear_inv_pct"
                 )
 
-                # ... después de leer 'costo_neto' y antes del preview:
-                precio_compra_calc = calcular_precio_compra(costo_neto, inversor, inv_pct_ui / 100.0)
-
-                st.caption(
-                    f"**Preview:** Precio compra = {fmt_money_up(precio_compra_calc)}  "
-                    f"(costo {fmt_money_up(costo_neto)} + {inv_pct_ui:.1f}% inversor)"
-                )
-
-                # Al GUARDAR la venta, usar 'precio_compra_calc' en lugar de recalcular sin %:
-                nueva_op["purchase_price"] = precio_compra_calc
-                # y si creás cuotas:
-                create_installments(nueva_op["id"], distribuir(precio_compra_calc, cuotas), is_purchase=True)
-                # ahora elegís del listado de vendedores existentes
-                vendedor = st.selectbox(
-                    "Vendedor",
-                    options=vend_options,
-                    placeholder="Elegí un vendedor",
-                    key="crear_vendedor"
-                )
-                revendedor = st.text_input("Revendedor (opcional)", value="", key="crear_revendedor")
-                cliente   = st.text_input("Cliente", value="", key="crear_cliente")
-                proveedor = st.text_input("Proveedor", value="", key="crear_proveedor")
+                # Resto de campos
+                vendedor    = st.selectbox("Vendedor", options=vend_options, placeholder="Elegí un vendedor", key="crear_vendedor")
+                revendedor  = st.text_input("Revendedor (opcional)", value="", key="crear_revendedor")
+                cliente     = st.text_input("Cliente", value="", key="crear_cliente")
+                proveedor   = st.text_input("Proveedor", value="", key="crear_proveedor")
                 descripcion = st.text_input("Descripción (celular vendido)", value="", key="crear_desc")
 
-                costo  = st.number_input("Costo (neto)", min_value=0.0, step=0.01, format="%.2f", key="crear_costo")
-                venta  = st.number_input("Venta", min_value=0.0, step=0.01, format="%.2f", key="crear_venta")
-                cuotas = st.number_input("Cuotas", min_value=0, step=1, key="crear_cuotas")
-                fecha  = st.date_input("Fecha de cobro", value=date.today(), key="crear_fecha")
+                costo   = st.number_input("Costo (neto)", min_value=0.0, step=0.01, format="%.2f", key="crear_costo")
+                venta   = st.number_input("Venta",        min_value=0.0, step=0.01, format="%.2f", key="crear_venta")
+                cuotas  = st.number_input("Cuotas",       min_value=0,   step=1,                 key="crear_cuotas")
+                fecha   = st.date_input("Fecha de cobro", value=date.today(),                     key="crear_fecha")
 
-                # Preview (misma lógica que ya usamos)
-                precio_compra = calcular_precio_compra(costo, inversor)
-                comision_auto = calc_comision_auto(venta, costo)
-                ganancia_neta = (venta - precio_compra) - comision_auto
+                # ✅ Preview usando el % personalizado
+                precio_compra_calc = calcular_precio_compra(costo, inversor, inv_pct_ui / 100.0)
+                comision_auto      = calc_comision_auto(venta, costo)
+                ganancia_neta      = (venta - precio_compra_calc) - comision_auto
                 st.caption(
-                    f"**Preview:** Precio compra = {fmt_money_up(precio_compra)} | "
-                    f"Comisión (auto) = {fmt_money_up(comision_auto)} | "
+                    f"**Preview:** Precio compra = {fmt_money_up(precio_compra_calc)} "
+                    f"(costo {fmt_money_up(costo)} + {inv_pct_ui:.1f}% inversor) · "
+                    f"Comisión (auto) = {fmt_money_up(comision_auto)} · "
                     f"Ganancia neta = {fmt_money_up(ganancia_neta)}"
                 )
 
@@ -1248,25 +1236,26 @@ if is_admin_user:
                             "descripcion": descripcion.strip() or None,
                             "cliente": cliente.strip() or None,
                             "proveedor": proveedor.strip() or None,
-                            "zona": vendedor.strip(),              # <- vendedor seleccionado
+                            "zona": vendedor.strip(),
                             "revendedor": revendedor.strip() or None,
-                            "nombre": inversor.strip(),            # inversor
-                            "L": float(costo) if costo else 0.0,   # costo neto
-                            "N": float(venta) if venta else 0.0,   # venta total
-                            "O": int(cuotas) if cuotas else 0,     # cuotas
+                            "nombre": inversor.strip(),
+                            "L": float(costo) if costo else 0.0,
+                            "N": float(venta) if venta else 0.0,
+                            "O": int(cuotas) if cuotas else 0,
                             "estado": "VIGENTE",
                             "y_pagado": 0.0,
                             "comision": float(comision_auto),
-                            "sale_date": to_iso(fecha),            # guarda sin hora (YYYY-MM-DD)
-                            "purchase_price": float(precio_compra)
+                            "sale_date": to_iso(fecha),
+                            # 👇 guarda el precio de compra con el % elegido
+                            "purchase_price": float(precio_compra_calc),
                         }
                         new_id = upsert_operation(op)
 
-                        # cuotas
+                        # Cuotas
                         delete_installments(new_id, is_purchase=None)
-                        if cuotas > 0:
-                            create_installments(new_id, distribuir(venta, cuotas), is_purchase=False)       # VENTA
-                            create_installments(new_id, distribuir(precio_compra, cuotas), is_purchase=True) # COMPRA
+                        if int(cuotas) > 0:
+                            create_installments(new_id, distribuir(venta, int(cuotas)),             is_purchase=False)  # VENTA
+                            create_installments(new_id, distribuir(precio_compra_calc, int(cuotas)), is_purchase=True)   # COMPRA
 
                         recalc_status_for_operation(new_id)
                         st.success(f"Venta #{new_id} creada correctamente.")
@@ -1276,7 +1265,8 @@ if is_admin_user:
                             if url: st.markdown(f"[Ver commit →]({url})")
                         except Exception as e:
                             st.error(f"Falló el backup: {e}")
-                        st.rerun() # vuelve con el formulario limpio
+                        st.rerun()
+
 
     with tab_vendedores:
         st.subheader("💸 Sueldo mensual por vendedor (solo comisiones)")

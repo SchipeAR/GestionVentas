@@ -1503,6 +1503,8 @@ with tab_listar:
             df_ops = pd.DataFrame(rows)
             editor_key = f"{key_prefix}_listado_editor"
             sel_param = st.query_params.get("selid")
+            if key_prefix == "uno":
+                df_ops = df_ops[df_ops["Tipo"] != "COMPRA"].reset_index(drop=True)
             if isinstance(sel_param, list):
                 sel_param = sel_param[0] if sel_param else None
             try:

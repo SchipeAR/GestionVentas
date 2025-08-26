@@ -1215,13 +1215,17 @@ if is_admin_user:
                 cuotas  = st.number_input("Cuotas",       min_value=0,   step=1,                 key="crear_cuotas")
                 fecha   = st.date_input("Fecha de cobro", value=date.today(),                     key="crear_fecha")
 
+                inv_pct_effective = 0.0 if int(cuotas) == 1 else float(inv_pct_ui)
                 # ✅ Preview usando el % personalizado
-                precio_compra_calc = calcular_precio_compra(costo, inversor, inv_pct_ui / 100.0)
+                precio_compra_calc = calcular_precio_compra(costo, inversor, inv_pct_effective / 100.0)
                 comision_auto      = calc_comision_auto(venta, costo)
                 ganancia_neta      = (venta - precio_compra_calc) - comision_auto
+
+                if int(cuotas) == 1:
+                    st.info("Como es una venta de 1 pago, el porcentaje del inversor se fija en 0% para esta operación.")
                 st.caption(
                     f"**Preview:** Precio compra = {fmt_money_up(precio_compra_calc)} "
-                    f"(costo {fmt_money_up(costo)} + {inv_pct_ui:.1f}% inversor) · "
+                    f"(costo {fmt_money_up(costo)} + {inv_pct_effective:.1f}% inversor) · "
                     f"Comisión (auto) = {fmt_money_up(comision_auto)} · "
                     f"Ganancia neta = {fmt_money_up(ganancia_neta)}"
                 )
@@ -1231,6 +1235,8 @@ if is_admin_user:
                     if not vendedor:
                         st.error("Elegí un vendedor antes de guardar.")
                     else:
+                        inv_pct_effective = 0.0 if int(cuotas) == 1 else float(inv_pct_ui)
+                        precio_compra_calc = calcular_precio_compra(costo, inversor, inv_pct_effective / 100.0)
                         op = {
                             "tipo": "VENTA",
                             "descripcion": descripcion.strip() or None,
@@ -1246,7 +1252,6 @@ if is_admin_user:
                             "y_pagado": 0.0,
                             "comision": float(comision_auto),
                             "sale_date": to_iso(fecha),
-                            # 👇 guarda el precio de compra con el % elegido
                             "purchase_price": float(precio_compra_calc),
                         }
                         new_id = upsert_operation(op)
@@ -1254,8 +1259,8 @@ if is_admin_user:
                         # Cuotas
                         delete_installments(new_id, is_purchase=None)
                         if int(cuotas) > 0:
-                            create_installments(new_id, distribuir(venta, int(cuotas)),             is_purchase=False)  # VENTA
-                            create_installments(new_id, distribuir(precio_compra_calc, int(cuotas)), is_purchase=True)   # COMPRA
+                            create_installments(new_id, distribuir(venta, int(cuotas)),              is_purchase=False)  # VENTA
+                            create_installments(new_id, distribuir(precio_compra_calc, int(cuotas)),  is_purchase=True)   # COMPRA
 
                         recalc_status_for_operation(new_id)
                         st.success(f"Venta #{new_id} creada correctamente.")
@@ -1824,6 +1829,12 @@ with tab_listar:
                         value=inv_now if inv_now in INVERSORES else "GONZA",
                         key=f"{key_prefix}_inv_{op['id']}", disabled=not puede_editar
                     )
+                    inv_pct_edit = st.number_input(
+                        "Porcentaje del inversor (%)",
+                        min_value=0.0, max_value=100.0, step=0.1, value=18.0,
+                        key=f"{key_prefix}_invpct_{op['id']}", disabled=not puede_editar
+                    )
+
                     new_vendedor = st.text_input("Vendedor", value=op.get("zona") or "", key=f"{key_prefix}_vend_{op['id']}", disabled=not puede_editar)
                     new_revendedor = st.text_input("Revendedor", value=op.get("revendedor") or "", key=f"{key_prefix}_rev_{op['id']}", disabled=not puede_editar)
                     new_cliente = st.text_input("Cliente", value=op.get("cliente") or "", key=f"{key_prefix}_cli_{op['id']}", disabled=not puede_editar)
@@ -1835,18 +1846,18 @@ with tab_listar:
                     default_date = parse_iso_or_today(op.get("sale_date") or op.get("created_at"))
                     new_fecha = st.date_input("Fecha de cobro", value=default_date, key=f"{key_prefix}_fv_{op['id']}", disabled=not puede_editar)
 
-                    new_price = calcular_precio_compra(new_costo, new_inversor)
+                    new_price = calcular_precio_compra(new_costo, new_inversor, inv_pct_edit / 100.0)
                     new_comision_auto = calc_comision_auto(new_venta, new_costo)
                     new_ganancia_neta = (new_venta - new_price) - new_comision_auto
 
                     st.caption(
-                        f"**Preview:** Precio compra = {fmt_money_up(new_price)} | "
+                        f"**Preview:** Precio compra = {fmt_money_up(new_price)} "
+                        f"(costo {fmt_money_up(new_costo)} + {inv_pct_edit:.1f}% inversor) | "
                         f"Comisión (auto) = {fmt_money_up(new_comision_auto)} | "
                         f"Ganancia neta = {fmt_money_up(new_ganancia_neta)}"
                     )
-
                     if puede_editar and st.button("Guardar cambios de venta", key=f"{key_prefix}_save_op_{op['id']}"):
-                        new_price = calcular_precio_compra(new_costo, new_inversor)
+                        new_price = calcular_precio_compra(new_costo, new_inversor, inv_pct_edit / 100.0)
                         op["nombre"] = new_inversor
                         op["zona"] = new_vendedor
                         op["revendedor"] = new_revendedor
@@ -1920,7 +1931,7 @@ with tab_listar:
         with tabs[1]:
             st.caption("Ventas en 1 solo pago")
             render_listado(ops_uno, key_prefix="uno")
-    
+
         with tabs[2]:
             st.caption("Ventas canceladas")
             render_listado(ops_cancel, key_prefix="cancel")

@@ -866,11 +866,23 @@ def recalc_status_for_operation(op_id):
 # =========================
 INVERSORES = ["GONZA", "MARTIN", "TOBIAS (YO)"]
 
-def calcular_precio_compra(costo, inversor):
-    # Ahora TOBIAS (YO) también al 18%
-    if (inversor or "").upper() in ("GONZA", "MARTIN", "TOBIAS (YO)"):
-        return float(costo or 0) * 1.18
-    return float(costo or 0)
+# Porcentaje por defecto de cada inversor (fallback)
+INV_PCT_DEFAULTS = {
+    "GONZA": 0.18,
+    "MARTIN": 0.18,
+    "TOBIAS (YO)": 0.18,
+}
+
+def calcular_precio_compra(costo_neto: float, inversor: str, inv_pct: float | None = None) -> float:
+    """
+    costo_neto: costo sin % inversor
+    inversor: nombre del inversor (para el default)
+    inv_pct: porcentaje en 1.0 = 100% (ej. 0.18 para 18%). Si es None, usa el default del inversor.
+    """
+    c = float(costo_neto or 0.0)
+    p = (float(inv_pct) if inv_pct is not None else INV_PCT_DEFAULTS.get(str(inversor), 0.18))
+    return round(c * (1.0 + max(0.0, p)), 2)
+
 
 # Comisión = 40% de (Venta - (Costo_neto * 1.25))
 COMISION_PCT = 0.40
@@ -1175,14 +1187,30 @@ if is_admin_user:
                 st.warning("No hay vendedores cargados. Cargá uno desde 👤 Administración.")
 
             with st.form("form_crear_venta", clear_on_submit=True):
-                inversor = st.selectbox(
-                    "Inversor",
-                    options=INVERSORES,
-                    index=(INVERSORES.index("GONZA") if "GONZA" in INVERSORES else 0),
-                    key="crear_inversor",
-                    placeholder="Elegí un inversor")                       
+                # Elegir inversor (si todavía no lo cambiaste a selectbox, hacelo)
+                inversor = st.selectbox("Inversor", options=INVERSORES,
+                                        index=(INVERSORES.index("GONZA") if "GONZA" in INVERSORES else 0),
+                                        key="crear_inversor")
 
+                # Porcentaje del inversor (editable, por defecto 18%)
+                inv_pct_ui = st.number_input(
+                    "Porcentaje del inversor (%)",
+                    min_value=0.0, max_value=100.0, step=0.1, value=18.0,
+                    key="crear_inv_pct"
+                )
 
+                # ... después de leer 'costo_neto' y antes del preview:
+                precio_compra_calc = calcular_precio_compra(costo_neto, inversor, inv_pct_ui / 100.0)
+
+                st.caption(
+                    f"**Preview:** Precio compra = {fmt_money_up(precio_compra_calc)}  "
+                    f"(costo {fmt_money_up(costo_neto)} + {inv_pct_ui:.1f}% inversor)"
+                )
+
+                # Al GUARDAR la venta, usar 'precio_compra_calc' en lugar de recalcular sin %:
+                nueva_op["purchase_price"] = precio_compra_calc
+                # y si creás cuotas:
+                create_installments(nueva_op["id"], distribuir(precio_compra_calc, cuotas), is_purchase=True)
                 # ahora elegís del listado de vendedores existentes
                 vendedor = st.selectbox(
                     "Vendedor",
@@ -1644,7 +1672,7 @@ with tab_listar:
                     )
 
                 # Permisos
-                puede_editar = is_admin()
+                puede_   = is_admin()
 
                 # --- Cuotas de VENTA (cobros) ---
                 with st.expander("💳 Gestión de cuotas — VENTA (cobros)", expanded=False):

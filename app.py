@@ -609,6 +609,17 @@ def set_installment_note(iid: int, note: str, updated_at_iso: str | None = None)
         ON CONFLICT(iid) DO UPDATE SET note=excluded.note, updated_at=excluded.updated_at
         """, (iid, note, updated_at_iso or to_iso(date.today())))
         con.commit()
+def _is_toto(vendedor: str) -> bool:
+    return (vendedor or "").strip().upper() == "TOTO DONOFRIO"
+
+def calc_ganancia_neta(venta_total: float, purchase_price: float, comision_total: float, vendedor: str) -> float:
+    """
+    Si el vendedor es Toto Donofrio -> NO se descuenta comisión.
+    En el resto -> ganancia = venta - compra - comisión.
+    """
+    if _is_toto(vendedor):
+        return venta_total - purchase_price
+    return venta_total - purchase_price - comision_total
 
 def init_db():
     with get_conn() as con:
@@ -1217,16 +1228,18 @@ if is_admin_user:
 
                 inv_pct_effective = 0.0 if int(cuotas) == 1 else float(inv_pct_ui)
                 # ✅ Preview usando el % personalizado
+                base_para_comision = costo if int(cuotas) == 1 else venta
+                comision_auto = calc_comision_auto(base_para_comision, costo)
                 precio_compra_calc = calcular_precio_compra(costo, inversor, inv_pct_effective / 100.0)
-                comision_auto      = calc_comision_auto(venta, costo)
-                ganancia_neta      = (venta - precio_compra_calc) - comision_auto
+                ganancia_neta = calc_ganancia_neta(venta, precio_compra_calc, comision_auto, vendedor)
 
                 if int(cuotas) == 1:
-                    st.info("Como es una venta de 1 pago, el porcentaje del inversor se fija en 0% para esta operación.")
+                    st.info("Venta de 1 pago: % inversor fijado en 0% y la comisión se calcula en base al costo.")
+
                 st.caption(
                     f"**Preview:** Precio compra = {fmt_money_up(precio_compra_calc)} "
                     f"(costo {fmt_money_up(costo)} + {inv_pct_effective:.1f}% inversor) · "
-                    f"Comisión (auto) = {fmt_money_up(comision_auto)} · "
+                    f"Comisión = {fmt_money_up(comision_auto)} · "
                     f"Ganancia neta = {fmt_money_up(ganancia_neta)}"
                 )
 
@@ -1236,6 +1249,8 @@ if is_admin_user:
                         st.error("Elegí un vendedor antes de guardar.")
                     else:
                         inv_pct_effective = 0.0 if int(cuotas) == 1 else float(inv_pct_ui)
+                        base_para_comision = costo if int(cuotas) == 1 else venta
+                        comision_auto      = calc_comision_auto(base_para_comision, costo)
                         precio_compra_calc = calcular_precio_compra(costo, inversor, inv_pct_effective / 100.0)
                         op = {
                             "tipo": "VENTA",
@@ -1445,8 +1460,9 @@ with tab_listar:
                 pendiente_compra = price - pagado_compra
                 estado_compra = "CANCELADO" if abs(pagado_compra - price) < 0.01 else "VIGENTE"
 
-                # Ganancia
-                ganancia = (venta_total - price - comision_total)
+                vendedor_actual = (op.get("zona") or "")
+                ganancia = calc_ganancia_neta(venta_total, price, comision_total, vendedor_actual)
+
 
                 # --- Fila VENTA (primero) (sin flechas en VENTA) ---
                 rows.append({
@@ -1848,9 +1864,12 @@ with tab_listar:
                     default_date = parse_iso_or_today(op.get("sale_date") or op.get("created_at"))
                     new_fecha = st.date_input("Fecha de cobro", value=default_date, key=f"{key_prefix}_fv_{op['id']}", disabled=not puede_editar)
 
-                    new_price = calcular_precio_compra(new_costo, new_inversor, inv_pct_edit / 100.0)
-                    new_comision_auto = calc_comision_auto(new_venta, new_costo)
-                    new_ganancia_neta = (new_venta - new_price) - new_comision_auto
+                    inv_pct_effective = 0.0 if int(new_cuotas) == 1 else float(inv_pct_edit)
+                    new_price = calcular_precio_compra(new_costo, new_inversor, inv_pct_effective / 100.0)
+                    base_para_comision = new_costo if int(new_cuotas) == 1 else new_venta
+                    new_comision_auto  = calc_comision_auto(base_para_comision, new_costo)
+                    new_ganancia_neta  = calc_ganancia_neta(new_venta, new_price, new_comision_auto, new_vendedor)
+
 
                     st.caption(
                         f"**Preview:** Precio compra = {fmt_money_up(new_price)} "

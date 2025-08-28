@@ -27,6 +27,12 @@ st.markdown("""
 }
 </style>
 """, unsafe_allow_html=True)
+# Porcentaje por defecto de cada inversor (fallback)
+INV_PCT_DEFAULTS = {
+    "GONZA": 0.18,
+    "MARTIN": 0.18,
+    "TOBIAS (YO)": 0.18,
+}
 
 def load_css():
     st.markdown("""
@@ -866,11 +872,16 @@ def recalc_status_for_operation(op_id):
 # =========================
 INVERSORES = ["GONZA", "MARTIN", "TOBIAS (YO)"]
 
-def calcular_precio_compra(costo, inversor):
-    # Ahora TOBIAS (YO) también al 18%
-    if (inversor or "").upper() in ("GONZA", "MARTIN", "TOBIAS (YO)"):
-        return float(costo or 0) * 1.18
-    return float(costo or 0)
+def calcular_precio_compra(costo_neto: float, inversor: str, inv_pct: float | None = None) -> float:
+    """
+    costo_neto: costo sin % inversor
+    inversor:   nombre del inversor (para el default)
+    inv_pct:    porcentaje en 1.0 = 100% (ej. 0.18 = 18%).
+                Si es None, usa INV_PCT_DEFAULTS por nombre de inversor.
+    """
+    c = float(costo_neto or 0.0)
+    p = (float(inv_pct) if inv_pct is not None else INV_PCT_DEFAULTS.get(str(inversor), 0.18))
+    return round(c * (1.0 + max(0.0, p)), 2)
 
 # Comisión = 40% de (Venta - (Costo_neto * 1.25))
 COMISION_PCT = 0.40
@@ -1201,12 +1212,31 @@ if is_admin_user:
                 fecha  = st.date_input("Fecha de cobro", value=date.today(), key="crear_fecha")
 
                 # Preview (misma lógica que ya usamos)
-                precio_compra = calcular_precio_compra(costo, inversor)
+                inv_pct_ui = st.number_input(
+                    "Porcentaje del inversor (%)",
+                    min_value=0.0, max_value=100.0, step=0.1, value=18.0,
+                    key="crear_inv_pct"
+                )
+
+                # 2) si es 1 pago, el % efectivo se fuerza a 0
+                inv_pct_effective = 0.0 if int(cuotas or 0) == 1 else float(inv_pct_ui)
+
+                # 3) cálculo usando el % elegido
+                precio_compra = calcular_precio_compra(costo, inversor, inv_pct_effective / 100.0)
+
+                # comisión: si tu regla de 1 pago va “con costo”, mantenela; si no, dejá como estaba
+                # (ejemplo simple, como lo tenías)
                 comision_auto = calc_comision_auto(venta, costo)
                 ganancia_neta = (venta - precio_compra) - comision_auto
+
+                # 4) leyenda
+                if int(cuotas or 0) == 1:
+                    st.info("Venta de 1 pago: % inversor fijado en 0%.")
+
                 st.caption(
-                    f"**Preview:** Precio compra = {fmt_money_up(precio_compra)} | "
-                    f"Comisión (auto) = {fmt_money_up(comision_auto)} | "
+                    f"**Preview:** Precio compra = {fmt_money_up(precio_compra)}  "
+                    f"(costo {fmt_money_up(costo)} + {inv_pct_effective:.1f}% inversor) · "
+                    f"Comisión = {fmt_money_up(comision_auto)} · "
                     f"Ganancia neta = {fmt_money_up(ganancia_neta)}"
                 )
 
@@ -1214,6 +1244,9 @@ if is_admin_user:
                 if submitted:
                     if not vendedor:
                         st.error("Elegí un vendedor antes de guardar.")
+                    inv_pct_effective = 0.0 if int(cuotas or 0) == 1 else float(inv_pct_ui)
+                    precio_compra = calcular_precio_compra(costo, inversor, inv_pct_effective / 100.0)
+                    comision_auto = calc_comision_auto(venta, costo)
                     else:
                         op = {
                             "tipo": "VENTA",
@@ -1236,9 +1269,9 @@ if is_admin_user:
 
                         # cuotas
                         delete_installments(new_id, is_purchase=None)
-                        if cuotas > 0:
-                            create_installments(new_id, distribuir(venta, cuotas), is_purchase=False)       # VENTA
-                            create_installments(new_id, distribuir(precio_compra, cuotas), is_purchase=True) # COMPRA
+                        if int(cuotas or 0) > 0:
+                            create_installments(new_id, distribuir(venta, int(cuotas)), is_purchase=False)
+                            create_installments(new_id, distribuir(precio_compra, int(cuotas)), is_purchase=True)
 
                         recalc_status_for_operation(new_id)
                         st.success(f"Venta #{new_id} creada correctamente.")
@@ -1734,7 +1767,24 @@ with tab_listar:
                     default_date = parse_iso_or_today(op.get("sale_date") or op.get("created_at"))
                     new_fecha = st.date_input("Fecha de cobro", value=default_date, key=f"{key_prefix}_fv_{op['id']}", disabled=not puede_editar)
 
-                    new_price = calcular_precio_compra(new_costo, new_inversor)
+                    _implied_pct = 0.0
+                    try:
+                        if float(new_costo) > 0:
+                            _implied_pct = max((float(op.get("purchase_price") or 0.0) / float(new_costo)) - 1.0, 0.0) * 100.0
+                    except Exception:
+                        _implied_pct = 18.0
+
+                    inv_pct_edit = st.number_input(
+                        "Porcentaje del inversor (%)",
+                        min_value=0.0, max_value=100.0, step=0.1,
+                        value=float(_implied_pct if _implied_pct > 0 else 18.0),
+                        key=f"{key_prefix}_inv_pct_{op['id']}",
+                        disabled=not puede_editar
+                    )
+
+                    inv_pct_effective = 0.0 if int(new_cuotas or 0) == 1 else float(inv_pct_edit)
+
+                    new_price = calcular_precio_compra(new_costo, new_inversor, inv_pct_effective / 100.0)
                     new_comision_auto = calc_comision_auto(new_venta, new_costo)
                     new_ganancia_neta = (new_venta - new_price) - new_comision_auto
 
@@ -1745,6 +1795,8 @@ with tab_listar:
                     )
 
                     if puede_editar and st.button("Guardar cambios de venta", key=f"{key_prefix}_save_op_{op['id']}"):
+                        inv_pct_effective = 0.0 if int(new_cuotas or 0) == 1 else float(inv_pct_edit)
+                        new_price = calcular_precio_compra(new_costo, new_inversor, inv_pct_effective / 100.0)
                         new_price = calcular_precio_compra(new_costo, new_inversor)
                         op["nombre"] = new_inversor
                         op["zona"] = new_vendedor
@@ -1759,7 +1811,7 @@ with tab_listar:
                         op["purchase_price"] = new_price
                         upsert_operation(op)
                         delete_installments(op["id"], is_purchase=None)
-                        if new_cuotas > 0:
+                        if int(new_cuotas or 0) > 0:
                             create_installments(op["id"], distribuir(new_venta, new_cuotas), is_purchase=False)
                             create_installments(op["id"], distribuir(new_price, new_cuotas), is_purchase=True)
                         recalc_status_for_operation(op["id"])

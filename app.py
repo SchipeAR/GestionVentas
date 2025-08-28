@@ -1247,8 +1247,8 @@ if is_admin_user:
                     inv_pct_effective = 0.0 if int(cuotas or 0) == 1 else float(inv_pct_ui)
                     precio_compra = calcular_precio_compra(costo, inversor, inv_pct_effective / 100.0)
                     comision_auto = calc_comision_auto(venta, costo)
-                    else:
-                        op = {
+                    
+                    op = {
                             "tipo": "VENTA",
                             "descripcion": descripcion.strip() or None,
                             "cliente": cliente.strip() or None,
@@ -1265,23 +1265,23 @@ if is_admin_user:
                             "sale_date": to_iso(fecha),            # guarda sin hora (YYYY-MM-DD)
                             "purchase_price": float(precio_compra)
                         }
-                        new_id = upsert_operation(op)
+                    new_id = upsert_operation(op)
 
                         # cuotas
-                        delete_installments(new_id, is_purchase=None)
-                        if int(cuotas or 0) > 0:
+                    delete_installments(new_id, is_purchase=None)
+                    if int(cuotas or 0) > 0:
                             create_installments(new_id, distribuir(venta, int(cuotas)), is_purchase=False)
                             create_installments(new_id, distribuir(precio_compra, int(cuotas)), is_purchase=True)
 
                         recalc_status_for_operation(new_id)
-                        st.success(f"Venta #{new_id} creada correctamente.")
-                        try:
+                    st.success(f"Venta #{new_id} creada correctamente.")
+                    try:
                             url = backup_snapshot_to_github()
                             st.success("Backup subido a GitHub ✅")
                             if url: st.markdown(f"[Ver commit →]({url})")
-                        except Exception as e:
+                    except Exception as e:
                             st.error(f"Falló el backup: {e}")
-                        st.rerun() # vuelve con el formulario limpio
+                    st.rerun() # vuelve con el formulario limpio
 
 # --------- LISTADO & GESTIÓN ---------
 with tab_listar:

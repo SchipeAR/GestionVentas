@@ -1201,6 +1201,11 @@ if is_admin_user:
                     placeholder="Elegí un vendedor",
                     key="crear_vendedor"
                 )
+                inv_pct_ui = st.number_input(
+                    "Porcentaje del inversor (%)",
+                    min_value=0.0, max_value=100.0, step=0.1, value=18.0,
+                    key="crear_inv_pct"
+                )
                 revendedor = st.text_input("Revendedor (opcional)", value="", key="crear_revendedor")
                 cliente   = st.text_input("Cliente", value="", key="crear_cliente")
                 proveedor = st.text_input("Proveedor", value="", key="crear_proveedor")
@@ -1211,21 +1216,10 @@ if is_admin_user:
                 cuotas = st.number_input("Cuotas", min_value=0, step=1, key="crear_cuotas")
                 fecha  = st.date_input("Fecha de cobro", value=date.today(), key="crear_fecha")
 
-                # Preview (misma lógica que ya usamos)
-                inv_pct_ui = st.number_input(
-                    "Porcentaje del inversor (%)",
-                    min_value=0.0, max_value=100.0, step=0.1, value=18.0,
-                    key="crear_inv_pct"
-                )
-
-                # 2) si es 1 pago, el % efectivo se fuerza a 0
                 inv_pct_effective = 0.0 if int(cuotas or 0) == 1 else float(inv_pct_ui)
 
-                # 3) cálculo usando el % elegido
-                precio_compra = calcular_precio_compra(costo, inversor, inv_pct_effective / 100.0)
 
-                # comisión: si tu regla de 1 pago va “con costo”, mantenela; si no, dejá como estaba
-                # (ejemplo simple, como lo tenías)
+                precio_compra = calcular_precio_compra(costo, inversor, inv_pct_effective / 100.0)
                 comision_auto = calc_comision_auto(venta, costo)
                 ganancia_neta = (venta - precio_compra) - comision_auto
 

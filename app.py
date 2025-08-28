@@ -1321,10 +1321,14 @@ with tab_listar:
 
         # Traer operaciones una sola vez y dividir por cantidad de cuotas
         ops_all = list_operations(filtros) or []
-        ops_multi = [op for op in ops_all if int(op.get("O") or 0) >= 2]   # 2 o más cuotas
-        ops_uno   = [op for op in ops_all if int(op.get("O") or 0) == 1]   # 1 sola cuota
+        def _is_cancelado(op):
+            return str(op.get("estado") or "").strip().upper() == "CANCELADO"
+        ops_cancel = [op for op in ops_all if _is_cancelado(op)]
+        ops_vig    = [op for op in ops_all if not _is_cancelado(op)]
+        ops_multi = [op for op in ops_vig if int(op.get("O") or 0) >= 2]   # 2 o más cuotas
+        ops_uno   = [op for op in ops_vig if int(op.get("O") or 0) == 1]
 
-        tabs = st.tabs(["Cuotas (2+)", "Un pago (1)"])
+        tabs = st.tabs(["Cuotas (2+)", "Un pago (1)", "Cancelados"])
 
         # ----------- función de render compartida (no toques nada) -----------
         def render_listado(ops, key_prefix: str):
@@ -1413,6 +1417,8 @@ with tab_listar:
 
             # ---- DataFrame y orden de columnas ----
             df_ops = pd.DataFrame(rows)
+            if key_prefix == "uno":
+                df_ops = df_ops[df_ops["Tipo"] != "COMPRA"].reset_index(drop=True)
             editor_key = f"{key_prefix}_listado_editor"
             sel_param = st.query_params.get("selid")
             if isinstance(sel_param, list):
@@ -1865,6 +1871,10 @@ with tab_listar:
         with tabs[1]:
             st.caption("Ventas en 1 solo pago")
             render_listado(ops_uno, key_prefix="uno")
+        
+        with tabs[2]:
+            st.caption("Ventas canceladas")
+            render_listado(ops_cancel, key_prefix="cancel")
 
 # --------- INVERSORES (DETALLE POR CADA UNO) ---------
 # Ocultamos la pestaña a los vendedores para no exponer datos globales

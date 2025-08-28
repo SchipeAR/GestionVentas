@@ -1424,15 +1424,18 @@ with tab_listar:
 
 
             # ---- Mostrar tabla (ocultar columnas a vendedores) ----
+            try:
+                seller_flag = bool(seller)
+            except NameError:
+                seller_flag = not is_admin()
             if seller:
                 cols_hide = ["Inversor","Ganancia","Costo","Precio Compra"]
                 df_show = df_ops.drop(columns=cols_hide)
             else:
                 df_show = df_ops
-
-            cols_hide_uno = []
-            if key_prefix == "uno":
-                cols_hide_uno = ["Cuotas", "Cuotas pendientes", "Comisión x cuota", "Estado"]
+            
+            cols_hide_base = ["Inversor", "Ganancia", "Costo", "Precio Compra"] if seller_flag else []
+            cols_hide_uno = ["Cuotas", "Cuotas pendientes", "Comisión x cuota", "Estado"] if key_prefix == "uno" else []
 
             cols_to_hide = cols_hide_base + cols_hide_uno
             df_show = df_ops.drop(columns=cols_to_hide, errors="ignore")

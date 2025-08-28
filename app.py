@@ -1273,7 +1273,7 @@ if is_admin_user:
                             create_installments(new_id, distribuir(venta, int(cuotas)), is_purchase=False)
                             create_installments(new_id, distribuir(precio_compra, int(cuotas)), is_purchase=True)
 
-                        recalc_status_for_operation(new_id)
+                    recalc_status_for_operation(new_id)
                     st.success(f"Venta #{new_id} creada correctamente.")
                     try:
                             url = backup_snapshot_to_github()

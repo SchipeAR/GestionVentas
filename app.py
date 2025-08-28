@@ -1164,14 +1164,14 @@ with st.sidebar:
 # =========================
 is_admin_user = is_admin()
 if is_admin_user:
-    tab_crear, tab_listar, tab_inversores, tab_reportes, tab_admin, tab_cal = st.tabs(
-    ["➕ Nueva venta", "📋 Listado & gestión", "🏦 Inversores", "📊 Reportes KPI", "⚙️ Administración", "📅 Calendario"]
+    tab_crear, tab_listar, tab_inversores, tab_vendedores, tab_reportes, tab_admin, tab_cal = st.tabs(
+        ["➕ Nueva venta", "📋 Listado & gestión", "🏦 Inversores", "🧑‍💼 Vendedores", "📊 Reportes KPI", "⚙️ Administración", "📅 Calendario"]
     )
-
 else:
     tab_listar, tab_cal = st.tabs(
         ["📋 Listado & gestión", "📅 Calendario"]
     )
+
 
 # --------- CREAR / EDITAR VENTA (solo admin crea) ---------
 if is_admin_user:
@@ -1965,6 +1965,85 @@ if is_admin_user:
 
                     st.metric("A pagar este mes (impago)", f"${float(inv_ins[(inv_ins['tipo']=='COMPRA') & (inv_ins['paid']==False) & (inv_ins['due_date'].apply(lambda d: d.year==anio_actual and d.month==mes_actual))]['amount'].sum()):,.2f}")
                     st.write(f"**Ganancia acumulada del inversor (18%)**: ${inv_ganancia:,.2f}")
+    with tab_vendedores:
+        with tab_vendedores:
+            st.subheader("💸 Sueldo mensual por vendedor (solo comisiones)")
+
+            c1, c2, c3 = st.columns([1,1,1])
+            with c1:
+                anio_s = st.number_input("Año", min_value=2000, max_value=2100, value=date.today().year, step=1, key="vend_year_onlycomi")
+            with c2:
+                mes_s = st.number_input("Mes", min_value=1, max_value=12, value=date.today().month, step=1, key="vend_month_onlycomi")
+            with c3:
+                modo = st.radio("Modo", ["Proyección (vencimiento)", "Cobros registrados (pagadas)"], horizontal=False, key="vend_modo_onlycomi")
+            modo_pagadas = (modo == "Cobros registrados (pagadas)")
+
+            # Helper para la fecha de vencimiento de cada cuota (igual que usás en KPI)
+            def _fecha_cuota_local(op_dict, idx:int):
+                base = parse_iso_or_today(op_dict.get("sale_date") or op_dict.get("created_at"))
+                return add_months(base, max(int(idx) - 1, 0))
+
+            # Traemos todas las operaciones a las que tenés acceso
+            ops = list_operations(user_scope_filters({})) or []
+
+            # Acumuladores por vendedor
+            vend_comi_total = {}   # suma de comisiones del mes
+            vend_cant_cuotas = {}  # cuántas cuotas (con comisión) caen en el mes
+
+            for op in ops:
+                vendedor = (op.get("zona") or "").strip() or "—"
+                total_cuotas = int(op.get("O") or 0)
+                if total_cuotas <= 0:
+                    continue
+
+                comision_total = float(op.get("comision") or 0.0)
+                comi_x = (comision_total / total_cuotas) if total_cuotas > 0 else 0.0
+
+                # Solo cuotas de VENTA (las que generan comisión del vendedor)
+                cuotas_v = list_installments(op["id"], is_purchase=False) or []
+
+                for c in cuotas_v:
+                    idx = int(c["idx"])
+                    if not modo_pagadas:
+                        # Proyección por vencimiento
+                        due = _fecha_cuota_local(op, idx)
+                        cond = (due.year == int(anio_s) and due.month == int(mes_s))
+                    else:
+                        # Solo las pagadas en el mes
+                        paid_at = c.get("paid_at")
+                        cond = bool(c["paid"]) and paid_at and (
+                            parse_iso_or_today(paid_at).year == int(anio_s) and
+                            parse_iso_or_today(paid_at).month == int(mes_s)
+                        )
+
+                    if cond:
+                        vend_comi_total[vendedor] = vend_comi_total.get(vendedor, 0.0) + comi_x
+                        vend_cant_cuotas[vendedor] = vend_cant_cuotas.get(vendedor, 0) + 1
+
+            # Lista de vendedores "registrados" si tenés maestro; si no, usamos los que aparecen en las ventas
+            try:
+                nombres_reg = [v["nombre"] for v in list_vendors(active_only=True)]
+            except Exception:
+                nombres_reg = []
+            todos = sorted(set(nombres_reg) | set(vend_comi_total.keys()))
+
+            rows = []
+            for nombre in todos:
+                total = float(vend_comi_total.get(nombre, 0.0))
+                cant  = int(vend_cant_cuotas.get(nombre, 0))
+                rows.append({
+                    "Vendedor": nombre,
+                    "Cuotas en el mes": cant,
+                    "Sueldo (comisiones)": total
+                })
+
+            if not rows:
+                st.info("No hay comisiones para el período seleccionado.")
+            else:
+                df_v = pd.DataFrame(rows).sort_values("Sueldo (comisiones)", ascending=False)
+                df_v["Sueldo (comisiones)"] = df_v["Sueldo (comisiones)"].apply(fmt_money_up)
+                st.dataframe(df_v, use_container_width=True, hide_index=True)
+                st.caption("Se suma la comisión por cuota del mes. En 'Proyección' cuenta por vencimiento; en 'Cobros' por fecha de pago.")
 
                     
 else:

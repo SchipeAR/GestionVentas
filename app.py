@@ -1944,24 +1944,10 @@ if is_admin_user:
                     ops_df.apply(lambda r: r["costo_neto"]*0.18 if (str(r["inversor"]).upper() in ("GONZA","MARTIN","TOBIAS (YO)")) else 0.0, axis=1).sum()
                 )
 
-                c1, c2, c3 = st.columns(3)
-                c1.metric("Pagado a inversores", f"${total_pagado_inv:,.2f}")
-                c2.metric("Por pagar a inversores", f"${total_por_pagar_inv:,.2f}")
-                c3.metric("Ganancia de inversores (18%)", f"${ganancia_inversores:,.2f}")
-
                 # --- Ganancia por inversor (desglosada) ---
                 def _ganancia_inv_para(inv_nombre: str) -> float:
                     inv_ops = ops_df[ops_df["inversor"].fillna("").astype(str).str.upper() == inv_nombre.upper()]
                     return float((inv_ops["costo_neto"] * 0.18).sum())
-
-                gan_gonza  = _ganancia_inv_para("GONZA")
-                gan_martin = _ganancia_inv_para("MARTIN")
-                gan_tobias = _ganancia_inv_para("TOBIAS (YO)")
-
-                g1, g2, g3 = st.columns(3)
-                g1.metric("Ganancia GONZA (18%)", f"${gan_gonza:,.2f}")
-                g2.metric("Ganancia MARTIN (18%)", f"${gan_martin:,.2f}")
-                g3.metric("Ganancia TOBIAS (18%)", f"${gan_tobias:,.2f}")
                 
                 hoy = date.today()
                 anio_actual, mes_actual = hoy.year, hoy.month
@@ -2015,6 +2001,19 @@ if is_admin_user:
 
                     st.metric("A pagar este mes (impago)", f"${float(inv_ins[(inv_ins['tipo']=='COMPRA') & (inv_ins['paid']==False) & (inv_ins['due_date'].apply(lambda d: d.year==anio_actual and d.month==mes_actual))]['amount'].sum()):,.2f}")
                     st.write(f"**Ganancia acumulada del inversor (18%)**: ${inv_ganancia:,.2f}")
+                
+                c1, c2, c3 = st.columns(3)
+                c1.metric("Pagado a inversores", f"${total_pagado_inv:,.2f}")
+                c2.metric("Por pagar a inversores", f"${total_por_pagar_inv:,.2f}")
+                c3.metric("Ganancia de inversores (18%)", f"${ganancia_inversores:,.2f}")
+                gan_gonza  = _ganancia_inv_para("GONZA")
+                gan_martin = _ganancia_inv_para("MARTIN")
+                gan_tobias = _ganancia_inv_para("TOBIAS (YO)")
+
+                g1, g2, g3 = st.columns(3)
+                g1.metric("Ganancia GONZA (18%)", f"${gan_gonza:,.2f}")
+                g2.metric("Ganancia MARTIN (18%)", f"${gan_martin:,.2f}")
+                g3.metric("Ganancia TOBIAS (18%)", f"${gan_tobias:,.2f}")
     with tab_vendedores:
         with tab_vendedores:
             st.subheader("💸 Sueldo mensual por vendedor (solo comisiones)")

@@ -1926,7 +1926,6 @@ with tab_listar:
 if is_admin_user:
     with tab_inversores:
         with card("Inversores", "🏦"):
-            st.subheader("🤝 Inversores")
 
             ops = list_operations()
             if not ops:
@@ -2001,7 +2000,7 @@ if is_admin_user:
 
                     st.metric("A pagar este mes (impago)", f"${float(inv_ins[(inv_ins['tipo']=='COMPRA') & (inv_ins['paid']==False) & (inv_ins['due_date'].apply(lambda d: d.year==anio_actual and d.month==mes_actual))]['amount'].sum()):,.2f}")
                     st.write(f"**Ganancia acumulada del inversor (18%)**: ${inv_ganancia:,.2f}")
-                
+                st.divider()
                 c1, c2, c3 = st.columns(3)
                 c1.metric("Pagado a inversores", f"${total_pagado_inv:,.2f}")
                 c2.metric("Por pagar a inversores", f"${total_por_pagar_inv:,.2f}")

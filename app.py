@@ -1266,6 +1266,21 @@ if is_admin_user:
                     if int(cuotas or 0) > 0:
                             create_installments(new_id, distribuir(venta, int(cuotas)), is_purchase=False)
                             create_installments(new_id, distribuir(precio_compra, int(cuotas)), is_purchase=True)
+                    
+                    # Si es 1 pago: marcar automáticamente la cuota de VENTA como pagada
+                    if int(cuotas or 0) == 1:
+                        cuotas_v = list_installments(new_id, is_purchase=False) or []
+                        # buscamos la cuota idx==1 por las dudas
+                        iid = None
+                        for c in cuotas_v:
+                            if int(c["idx"]) == 1:
+                                iid = c["id"]
+                                break
+                        if not iid and cuotas_v:
+                            iid = cuotas_v[0]["id"]
+                        if iid:
+                            set_installment_paid(iid, True, paid_at_iso=to_iso(fecha))  # usa la fecha de cobro del form
+
 
                     recalc_status_for_operation(new_id)
                     st.success(f"Venta #{new_id} creada correctamente.")
@@ -1622,72 +1637,73 @@ with tab_listar:
                 puede_editar = is_admin()
 
                 # --- Cuotas de VENTA (cobros) ---
-                with st.expander("💳 Gestión de cuotas — VENTA (cobros)", expanded=False):
-                    solo_lectura = not is_admin()
-                    if solo_lectura:
-                        st.info("Solo un administrador puede registrar/editar cuotas. Visualización en modo lectura.")
+                if key_prefix != "uno":
+                    with st.expander("💳 Gestión de cuotas — VENTA (cobros)", expanded=False):
+                        solo_lectura = not is_admin()
+                        if solo_lectura:
+                            st.info("Solo un administrador puede registrar/editar cuotas. Visualización en modo lectura.")
 
-                    cuotas_venta = list_installments(op["id"], is_purchase=False) or []
-                    if not cuotas_venta:
-                        st.info("No hay cuotas de VENTA registradas.")
-                    else:
-                        # --- armar DF (id como índice) ---
-                        ensure_notes_table()
-                        notes_orig_v = {c["id"]: get_installment_note(c["id"]) for c in cuotas_venta}
+                        cuotas_venta = list_installments(op["id"], is_purchase=False) or []
+                        if not cuotas_venta:
+                            st.info("No hay cuotas de VENTA registradas.")
+                        else:
+                            # --- armar DF (id como índice) ---
+                            ensure_notes_table()
+                            notes_orig_v = {c["id"]: get_installment_note(c["id"]) for c in cuotas_venta}
 
-                        df_qv = pd.DataFrame([{
-                            "id": c["id"],
-                            "Cuota": c["idx"],
-                            "Monto": float(c["amount"]),
-                            "Pagada": bool(c["paid"]),
-                            "Fecha pago (registrada)": fmt_dmy_from_iso(c["paid_at"]),
-                            "Comentario": notes_orig_v.get(c["id"], "")
-                        } for c in cuotas_venta])
-                        df_qv = df_qv[["id","Cuota","Monto","Pagada","Fecha pago (registrada)","Comentario"]].set_index("id", drop=True)
+                            df_qv = pd.DataFrame([{
+                                "id": c["id"],
+                                "Cuota": c["idx"],
+                                "Monto": float(c["amount"]),
+                                "Pagada": bool(c["paid"]),
+                                "Fecha pago (registrada)": fmt_dmy_from_iso(c["paid_at"]),
+                                "Comentario": notes_orig_v.get(c["id"], "")
+                            } for c in cuotas_venta])
+                            df_qv = df_qv[["id","Cuota","Monto","Pagada","Fecha pago (registrada)","Comentario"]].set_index("id", drop=True)
 
-                        edited_qv = st.data_editor(
-                            df_qv,
-                            hide_index=True,
-                            use_container_width=True,
-                            num_rows="fixed",
-                            column_config={
-                                "Pagada": st.column_config.CheckboxColumn("Pagada", help="Marcar si la cuota está pagada", disabled=solo_lectura),
-                                "Monto": st.column_config.NumberColumn("Monto", step=0.01, format="%.2f", disabled=solo_lectura),
-                                "Cuota": st.column_config.NumberColumn("Cuota", disabled=True),
-                                "Fecha pago (registrada)": st.column_config.TextColumn("Fecha pago (registrada)", disabled=True),
-                                "Comentario": st.column_config.TextColumn("Comentario", help="Descripción / nota de esta cuota", disabled=solo_lectura),
-                            },
-                            key=f"{key_prefix}_qv_editor_{op['id']}"
-                        )
+                            edited_qv = st.data_editor(
+                                df_qv,
+                                hide_index=True,
+                                use_container_width=True,
+                                num_rows="fixed",
+                                column_config={
+                                    "Pagada": st.column_config.CheckboxColumn("Pagada", help="Marcar si la cuota está pagada", disabled=solo_lectura),
+                                    "Monto": st.column_config.NumberColumn("Monto", step=0.01, format="%.2f", disabled=solo_lectura),
+                                    "Cuota": st.column_config.NumberColumn("Cuota", disabled=True),
+                                    "Fecha pago (registrada)": st.column_config.TextColumn("Fecha pago (registrada)", disabled=True),
+                                    "Comentario": st.column_config.TextColumn("Comentario", help="Descripción / nota de esta cuota", disabled=solo_lectura),
+                                },
+                                key=f"{key_prefix}_qv_editor_{op['id']}"
+                            )
 
-                        fecha_pago_v = st.date_input(
-                            "Fecha de cobro a registrar (para las que marques como pagas)",
-                            value=date.today(), key=f"{key_prefix}_fpv_{op['id']}"
-                        )
+                            fecha_pago_v = st.date_input(
+                                "Fecha de cobro a registrar (para las que marques como pagas)",
+                                value=date.today(), key=f"{key_prefix}_fpv_{op['id']}"
+                            )
 
-                        if (not solo_lectura) and st.button("Guardar estado de cuotas VENTA", key=f"{key_prefix}_btn_pagar_v_{op['id']}"):
-                            iso_v = to_iso(fecha_pago_v)
-                            orig_by_id = {c["id"]: bool(c["paid"]) for c in cuotas_venta}
-                            for iid, row in edited_qv.iterrows():   # iid = índice oculto
-                                iid = int(iid)
-                                new_paid = bool(row["Pagada"])
-                                old_paid = orig_by_id.get(iid, False)
-                                if new_paid != old_paid:
-                                    set_installment_paid(iid, new_paid, paid_at_iso=(iso_v if new_paid else None))
+                            if (not solo_lectura) and st.button("Guardar estado de cuotas VENTA", key=f"{key_prefix}_btn_pagar_v_{op['id']}"):
+                                iso_v = to_iso(fecha_pago_v)
+                                orig_by_id = {c["id"]: bool(c["paid"]) for c in cuotas_venta}
+                                for iid, row in edited_qv.iterrows():   # iid = índice oculto
+                                    iid = int(iid)
+                                    new_paid = bool(row["Pagada"])
+                                    old_paid = orig_by_id.get(iid, False)
+                                    if new_paid != old_paid:
+                                        set_installment_paid(iid, new_paid, paid_at_iso=(iso_v if new_paid else None))
 
-                                new_note = (row.get("Comentario") or "").strip()
-                                if new_note != (notes_orig_v.get(iid) or ""):
-                                    set_installment_note(iid, new_note, updated_at_iso=iso_v)
+                                    new_note = (row.get("Comentario") or "").strip()
+                                    if new_note != (notes_orig_v.get(iid) or ""):
+                                        set_installment_note(iid, new_note, updated_at_iso=iso_v)
 
-                            recalc_status_for_operation(op["id"])
-                            st.success("Cuotas de VENTA actualizadas.")
-                            try:
-                                url = backup_snapshot_to_github()
-                                st.success("Backup subido a GitHub ✅")
-                                if url: st.markdown(f"[Ver commit →]({url})")
-                            except Exception as e:
-                                st.error(f"Falló el backup: {e}")
-                            st.rerun()
+                                recalc_status_for_operation(op["id"])
+                                st.success("Cuotas de VENTA actualizadas.")
+                                try:
+                                    url = backup_snapshot_to_github()
+                                    st.success("Backup subido a GitHub ✅")
+                                    if url: st.markdown(f"[Ver commit →]({url})")
+                                except Exception as e:
+                                    st.error(f"Falló el backup: {e}")
+                                st.rerun()
 
     
                 # --- Cuotas de COMPRA (pagos al inversor) ---
@@ -1830,6 +1846,18 @@ with tab_listar:
                         if int(new_cuotas or 0) > 0:
                             create_installments(op["id"], distribuir(new_venta, new_cuotas), is_purchase=False)
                             create_installments(op["id"], distribuir(new_price, new_cuotas), is_purchase=True)
+                        # Si ahora la venta quedó en 1 pago, marcar la cuota de VENTA como pagada
+                        if int(new_cuotas or 0) == 1:
+                            cuotas_v = list_installments(op["id"], is_purchase=False) or []
+                            iid = None
+                            for c in cuotas_v:
+                                if int(c["idx"]) == 1:
+                                    iid = c["id"]
+                                    break
+                            if not iid and cuotas_v:
+                                iid = cuotas_v[0]["id"]
+                            if iid:
+                                set_installment_paid(iid, True, paid_at_iso=to_iso(new_fecha))
                         recalc_status_for_operation(op["id"])
                         st.success("Venta actualizada y cuotas recalculadas.")
                         try:

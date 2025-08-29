@@ -1214,7 +1214,36 @@ if is_admin_user:
 
                 costo  = st.number_input("Costo (neto)", min_value=0.0, step=0.01, format="%.2f", key="crear_costo")
                 venta  = st.number_input("Venta", min_value=0.0, step=0.01, format="%.2f", key="crear_venta")
-                cuotas = st.number_input("Cuotas", min_value=0, step=1, key="crear_cuotas")
+                cuotas = st.number_input("Cuotas", min_value=0, step=1, value=0, key="crear_cuotas")
+                usar_por_cuota = st.checkbox("Calcular venta desde 'Valor por cuota'", value=False, key="crear_usar_por_cuota")
+                if usar_por_cuota:
+                    valor_cuota = st.number_input(
+                        "Valor por cuota",
+                        min_value=0.0, step=0.01, format="%.2f",
+                        key="crear_valor_cuota"
+                    )
+                    venta_calc = round(float(valor_cuota or 0.0) * int(cuotas or 0), 2)
+
+                    # Sincronizamos el campo "Venta (total)" con el cálculo
+                    if st.session_state.get("crear_venta_importe") != venta_calc:
+                        st.session_state["crear_venta_importe"] = venta_calc
+
+                    # Venta se muestra bloqueada porque viene del cálculo
+                    venta = st.number_input(
+                        "Venta (total)",
+                        min_value=0.0, step=0.01, format="%.2f",
+                        key="crear_venta_importe",
+                        disabled=True
+                    )
+                    st.caption(f"Venta total calculada: {fmt_money_up(venta_calc)} = {fmt_money_up(valor_cuota)} × {int(cuotas or 0)}")
+                else:
+                    # Modo clásico: ingreso directo del total
+                    venta = st.number_input(
+                        "Venta (total)",
+                        min_value=0.0, step=0.01, format="%.2f",
+                        value=st.session_state.get("crear_venta_importe", 0.0),
+                        key="crear_venta_importe"
+                    )
                 fecha  = st.date_input("Fecha de cobro", value=date.today(), key="crear_fecha")
 
                 inv_pct_effective = 0.0 if int(cuotas or 0) == 1 else float(inv_pct_ui)

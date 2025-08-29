@@ -1963,26 +1963,6 @@ if is_admin_user:
                 g3.metric("Ganancia TOBIAS (18%)", f"${gan_tobias:,.2f}")
 
 
-                cuota_mensual_total = 0.0
-                detalle = []
-                for _, r in ops_df.iterrows():
-                    op_id = int(r["id"])
-                    inv = r["inversor"]
-                    cuotas_compra = ins_df[(ins_df["operation_id"]==op_id) & (ins_df["tipo"]=="COMPRA")]
-                    for _, c in cuotas_compra.iterrows():
-                        venc = c["due_date"]
-                        if (venc.year==anio_actual and venc.month==mes_actual) and (not c["paid"]):
-                            cuota_mensual_total += float(c["amount"])
-                            detalle.append({
-                                "ID venta": op_id, "Inversor": inv, "Cuota #": int(c["idx"]),
-                                "Vence": venc.isoformat(), "Monto": float(c["amount"])
-                            })
-                st.metric("Total a pagar este mes (impago)", f"${cuota_mensual_total:,.2f}")
-                if detalle:
-                    st.dataframe(pd.DataFrame(detalle), use_container_width=True)
-                else:
-                    st.info("No hay cuotas impagas de COMPRA que venzan este mes.")
-
                 st.divider()
                 st.subheader("Detalle por inversor")
                 for inv in ["GONZA", "MARTIN", "TOBIAS (YO)"]:

@@ -1321,13 +1321,27 @@ with tab_listar:
 
         # Traer operaciones una sola vez y dividir por cantidad de cuotas
         ops_all = list_operations(filtros) or []
+
         def _is_cancelado(op):
             return str(op.get("estado") or "").strip().upper() == "CANCELADO"
-        ops_cancel = [op for op in ops_all if _is_cancelado(op)]
-        ops_vig    = [op for op in ops_all if not _is_cancelado(op)]
-        ops_multi = [op for op in ops_vig if int(op.get("O") or 0) >= 2]   # 2 o más cuotas
-        ops_uno   = [op for op in ops_vig if int(op.get("O") or 0) == 1]
 
+        def _cuotas(op) -> int:
+            try:
+                return int(op.get("O") or 0)
+            except Exception:
+                return 0
+
+        # 👉 Un pago: SIEMPRE acá, sin importar el estado
+        ops_uno = [op for op in ops_all if _cuotas(op) == 1]
+
+        # 👉 Candidatas a 2+ cuotas
+        ops_multi_all = [op for op in ops_all if _cuotas(op) >= 2]
+
+        # 👉 Dentro de 2+ cuotas, dividimos vigentes vs canceladas
+        ops_cancel = [op for op in ops_multi_all if _is_cancelado(op)]     # solo 2+ cuotas canceladas
+        ops_multi  = [op for op in ops_multi_all if not _is_cancelado(op)] # 2+ cuotas vigentes
+
+        # Tabs
         tabs = st.tabs(["Cuotas (2+)", "Un pago (1)", "Cancelados"])
 
         # ----------- función de render compartida (no toques nada) -----------
@@ -1867,15 +1881,15 @@ with tab_listar:
 
         # ---- Render de cada lista en su pestaña ----
         with tabs[0]:
-            st.caption("Ventas en 2 o más cuotas")
+            st.caption("Ventas en 2 o más cuotas (vigentes)")
             render_listado(ops_multi, key_prefix="multi")
 
         with tabs[1]:
             st.caption("Ventas en 1 solo pago")
             render_listado(ops_uno, key_prefix="uno")
-        
+
         with tabs[2]:
-            st.caption("Ventas canceladas")
+            st.caption("Ventas canceladas (solo 2+ cuotas)")
             render_listado(ops_cancel, key_prefix="cancel")
 
 # --------- INVERSORES (DETALLE POR CADA UNO) ---------

@@ -1963,6 +1963,10 @@ if is_admin_user:
                 g2.metric("Ganancia MARTIN (18%)", f"${gan_martin:,.2f}")
                 g3.metric("Ganancia TOBIAS (18%)", f"${gan_tobias:,.2f}")
                 
+                hoy = date.today()
+                anio_actual, mes_actual = hoy.year, hoy.month
+                ins_df = ins_df.copy()
+                ins_df["due_date"] = pd.to_datetime(ins_df["due_date"], errors="coerce")
                 if SHOW_INV_MONTHLY_TABLE:
                     st.divider()              
                     st.subheader("Cuota mensual a inversores (este mes, impagas)")

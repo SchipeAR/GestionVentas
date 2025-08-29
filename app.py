@@ -1962,10 +1962,6 @@ if is_admin_user:
                 g2.metric("Ganancia MARTIN (18%)", f"${gan_martin:,.2f}")
                 g3.metric("Ganancia TOBIAS (18%)", f"${gan_tobias:,.2f}")
 
-                st.divider()
-                st.subheader("Cuota mensual a inversores (este mes, impagas)")
-                hoy = date.today()
-                mes_actual, anio_actual = hoy.month, hoy.year
 
                 cuota_mensual_total = 0.0
                 detalle = []

@@ -582,6 +582,11 @@ def ensure_notes_table():
             updated_at TEXT
         )""")
         con.commit()
+
+def compra_cuotas_count(n_cuotas_venta: int) -> int:
+    """# cuotas al inversor: 6 por defecto, 1 si la venta es de un pago."""
+    return 1 if int(n_cuotas_venta or 0) == 1 else 6
+
 def fmt_dmy_from_iso(iso_val) -> str:
     if not iso_val:
         return ""
@@ -1264,10 +1269,14 @@ if is_admin_user:
 
                         # cuotas
                     delete_installments(new_id, is_purchase=None)
-                    if int(cuotas or 0) > 0:
-                            create_installments(new_id, distribuir(venta, int(cuotas)), is_purchase=False)
-                            create_installments(new_id, distribuir(precio_compra, int(cuotas)), is_purchase=True)
-                    
+                    if int(cuotas) > 0:
+                        # VENTA (cliente): respeta la cantidad elegida
+                        create_installments(new_id, distribuir(venta, int(cuotas)), is_purchase=False)
+
+                        # COMPRA (inversor): 6 ó 1 según la regla
+                        n_compra = compra_cuotas_count(int(cuotas))
+                        create_installments(new_id, distribuir(precio_compra_calc, n_compra), is_purchase=True)
+                                        
                     # Si es 1 pago: marcar automáticamente la cuota de VENTA como pagada
                     if int(cuotas or 0) == 1:
                         cuotas_v = list_installments(new_id, is_purchase=False) or []
@@ -1368,33 +1377,40 @@ with tab_listar:
 
             rows = []
             for op in ops:
-                total_cuotas = int(op.get("O") or 0)
+                total_cuotas_venta = int(op.get("O") or 0)
                 fecha_mostrar = op.get("sale_date") or op.get("created_at")
 
-                # VENTA (cobros)
+                # --- VENTA (cobros) ---
+                venta_total = float(op.get("N") or 0.0)
                 pagado_venta = sum_paid(op["id"], is_purchase=False)
                 pagadas_venta = count_paid_installments(op["id"], is_purchase=False)
-                pendientes_venta = max(total_cuotas - pagadas_venta, 0)
-                venta_total = float(op.get("N") or 0.0)
+                pendientes_venta = max(total_cuotas_venta - pagadas_venta, 0)
                 pendiente_venta = venta_total - pagado_venta
 
-                # Comisión, precio compra, etc.
+                # --- Comisión, costos, compra ---
                 comision_total = float(op.get("comision") or 0.0)
-                comision_x_cuota = (comision_total / total_cuotas) if total_cuotas > 0 else 0.0
+                comision_x_cuota = (comision_total / total_cuotas_venta) if total_cuotas_venta > 0 else 0.0
                 price = float(op.get("purchase_price") or 0.0)
                 costo_neto = float(op.get("L") or 0.0)
 
-                # COMPRA (pagos a inversor)
+                # --- COMPRA (pagos a inversor) ---
                 pagado_compra = sum_paid(op["id"], is_purchase=True)
                 pagadas_compra = count_paid_installments(op["id"], is_purchase=True)
-                pendientes_compra = max(total_cuotas - pagadas_compra, 0)
+                # cantidad real de cuotas de COMPRA (6 u 1). Si falla, fallback por regla.
+                try:
+                    n_compra_real = len(list_installments(op["id"], is_purchase=True)) or compra_cuotas_count(total_cuotas_venta)
+                except Exception:
+                    n_compra_real = compra_cuotas_count(total_cuotas_venta)
+
+                pendientes_compra = max(n_compra_real - pagadas_compra, 0)
                 pendiente_compra = price - pagado_compra
                 estado_compra = "CANCELADO" if abs(pagado_compra - price) < 0.01 else "VIGENTE"
 
-                # Ganancia
-                ganancia = (venta_total - price - comision_total)
+                # --- Ganancia (regla Toto) ---
+                vendedor_actual = op.get("zona") or ""
+                ganancia = calc_ganancia_neta(venta_total, price, comision_total, vendedor_actual)
 
-                # --- Fila VENTA (primero) (sin flechas en VENTA) ---
+                # --- Fila VENTA (primero) ---
                 rows.append({
                     "Tipo": "VENTA",
                     "ID venta": op["id"],
@@ -1402,14 +1418,14 @@ with tab_listar:
                     "Cliente": op.get("cliente"),
                     "Proveedor": op.get("proveedor") or "",
                     "Inversor": "↓",
-                    "Vendedor": op.get("zona"),
+                    "Vendedor": vendedor_actual,
                     "Revendedor": op.get("revendedor") or "",
                     "Costo": fmt_money_up(costo_neto),
                     "Precio Compra": "",  # sin flecha en VENTA
                     "Venta": fmt_money_up(venta_total),
                     "Comisión": fmt_money_up(comision_total),
                     "Comisión x cuota": fmt_money_up(comision_x_cuota),
-                    "Cuotas": fmt_int(total_cuotas),
+                    "Cuotas": fmt_int(total_cuotas_venta),
                     "Cuotas pendientes": fmt_int(pendientes_venta),
                     "$ Pagado": fmt_money_up(pagado_venta),
                     "$ Pendiente": fmt_money_up(pendiente_venta),
@@ -1422,28 +1438,29 @@ with tab_listar:
                 def up_arrow_if_empty(val):
                     return val if (isinstance(val, str) and val.strip()) else "↑"
 
-                rows.append({
-                    "Tipo": "COMPRA",
-                    "ID venta": op["id"],
-                    "Descripción": "↑",  # solo flecha aquí
-                    "Cliente": up_arrow_if_empty(""),
-                    "Proveedor": up_arrow_if_empty(""),
-                    "Inversor": op.get("nombre"),
-                    "Vendedor": up_arrow_if_empty(""),
-                    "Revendedor": up_arrow_if_empty(""),
-                    "Costo": up_arrow_if_empty(""),
-                    "Precio Compra": fmt_money_up(price),
-                    "Venta": up_arrow_if_empty(""),
-                    "Comisión": up_arrow_if_empty(""),
-                    "Comisión x cuota": up_arrow_if_empty(""),
-                    "Cuotas": fmt_int(total_cuotas),
-                    "Cuotas pendientes": fmt_int(pendientes_compra),
-                    "$ Pagado": fmt_money_up(pagado_compra),
-                    "$ Pendiente": fmt_money_up(pendiente_compra),
-                    "Estado": estado_compra,
-                    "Fecha de cobro": up_arrow_if_empty(""),
-                    "Ganancia": up_arrow_if_empty(""),
-                })
+                if key_prefix != "uno":
+                    rows.append({
+                        "Tipo": "COMPRA",
+                        "ID venta": op["id"],
+                        "Descripción": "↑",
+                        "Cliente": up_arrow_if_empty(""),
+                        "Proveedor": up_arrow_if_empty(""),
+                        "Inversor": op.get("nombre"),
+                        "Vendedor": up_arrow_if_empty(""),
+                        "Revendedor": up_arrow_if_empty(""),
+                        "Costo": up_arrow_if_empty(""),
+                        "Precio Compra": fmt_money_up(price),
+                        "Venta": up_arrow_if_empty(""),
+                        "Comisión": up_arrow_if_empty(""),
+                        "Comisión x cuota": up_arrow_if_empty(""),
+                        "Cuotas": fmt_int(n_compra_real),               # ← 6 u 1 según regla
+                        "Cuotas pendientes": fmt_int(pendientes_compra),
+                        "$ Pagado": fmt_money_up(pagado_compra),
+                        "$ Pendiente": fmt_money_up(pendiente_compra),
+                        "Estado": estado_compra,
+                        "Fecha de cobro": up_arrow_if_empty(""),
+                        "Ganancia": up_arrow_if_empty(""),
+                    })
 
             # ---- DataFrame y orden de columnas ----
             df_ops = pd.DataFrame(rows)
@@ -1844,9 +1861,13 @@ with tab_listar:
                         op["purchase_price"] = new_price
                         upsert_operation(op)
                         delete_installments(op["id"], is_purchase=None)
-                        if int(new_cuotas or 0) > 0:
-                            create_installments(op["id"], distribuir(new_venta, new_cuotas), is_purchase=False)
-                            create_installments(op["id"], distribuir(new_price, new_cuotas), is_purchase=True)
+                        if int(new_cuotas) > 0:
+                            # VENTA
+                            create_installments(op["id"], distribuir(new_venta, int(new_cuotas)), is_purchase=False)
+
+                            # COMPRA (siempre 6, excepto 1 pago)
+                            n_compra = compra_cuotas_count(int(new_cuotas))
+                            create_installments(op["id"], distribuir(new_price, n_compra), is_purchase=True)
                         # Si ahora la venta quedó en 1 pago, marcar la cuota de VENTA como pagada
                         if int(new_cuotas or 0) == 1:
                             cuotas_v = list_installments(op["id"], is_purchase=False) or []

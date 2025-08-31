@@ -1376,6 +1376,12 @@ with tab_listar:
                 return
 
             rows = []
+            def calc_ganancia_neta(venta_total: float, purchase_price: float,
+                                   comision_total: float, vendedor: str) -> float:
+                """Si el vendedor es Toto Donofrio, no se descuenta comisión."""
+                if (vendedor or "").strip().upper() == "TOTO DONOFRIO":
+                    return venta_total - purchase_price
+                return venta_total - purchase_price - comision_total
             for op in ops:
                 total_cuotas_venta = int(op.get("O") or 0)
                 fecha_mostrar = op.get("sale_date") or op.get("created_at")

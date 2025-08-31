@@ -1275,7 +1275,7 @@ if is_admin_user:
 
                         # COMPRA (inversor): 6 ó 1 según la regla
                         n_compra = compra_cuotas_count(int(cuotas))
-                        create_installments(new_id, distribuir(precio_compra_calc, n_compra), is_purchase=True)
+                        create_installments(new_id, distribuir(precio_compra, n_compra), is_purchase=True)
                                         
                     # Si es 1 pago: marcar automáticamente la cuota de VENTA como pagada
                     if int(cuotas or 0) == 1:

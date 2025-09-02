@@ -195,8 +195,7 @@ st.markdown(
     """
     <div class="hero">
       <div>
-        <div class="title"><span class="accent">Gestión Ventas 2025</span></div>
-        <div class="subtitle">Ventas + Compras (inversor) — panel de administración</div>
+        <div class="title"><span class="accent">Gestión Ventas</span></div>
       </div>
       <div class="badge">UI mejorada</div>
     </div>

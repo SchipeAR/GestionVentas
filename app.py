@@ -2623,6 +2623,14 @@ else:
 
     # Filtrar al mes/año elegidos
     cal_df = cal_df[(cal_df["Fecha"].dt.year == anio) & (cal_df["Fecha"].dt.month == mes)]
+    sel_day = None
+    try:
+        _param = st.query_params.get("calday")
+        if isinstance(_param, list):
+            _param = _param[0] if _param else None
+        sel_day = _dt.strptime(_param, "%Y-%m-%d").date() if _param else None
+    except Exception:
+        sel_day = None
     if cal_df.empty:
         st.warning("No hay cuotas impagas en el mes seleccionado.")
     else:
@@ -2693,8 +2701,12 @@ else:
             total_text = fmt_money_up(ttl) if cnt > 0 else ""
             count_text = str(cnt) if cnt > 0 else ""
 
+            selected_cls = " selected" if (sel_day and day == sel_day) else ""
+            href = f"?calday={day.isoformat()}#cal"
+
             return f"""
-            <td class="cell" style="--bg:{bg}; --border:{border}">
+            <td class="cell{selected_cls}" style="--bg:{bg}; --border:{border}">
+                <a class="hit" href="{href}" title="Ver IDs del {d:02d}"></a>
                 <div class="day">{d:02d}</div>
                 <div class="count" title="Cuotas: {count_text}">{count_text}</div>
                 {chips}
@@ -2773,6 +2785,12 @@ else:
             .cal .chip.more {{
                 background: rgba(0,0,0,0.25); font-weight:700; color:#fff;
             }}
+            .cal td.cell .hit{{
+                position:absolute; inset:0; z-index:5; cursor:pointer; text-decoration:none;
+            }}
+            .cal td.cell.selected{{
+                outline:2px solid #ffd54f; box-shadow: 0 0 0 3px rgba(255,213,79,.28) inset, var(--shadow);
+            }}
             </style>
 
         <table class="cal">
@@ -2782,8 +2800,39 @@ else:
         <tbody>{rows_html}</tbody>
         </table>
         """
-
+        st.markdown('<a id="cal"></a>', unsafe_allow_html=True)
         st_html(cal_html, height=(len(weeks) * 140 + 120))
+        # === Listado de IDs para el día seleccionado ===
+        if sel_day:
+            df_day = cal_df[cal_df["Fecha"].dt.date == sel_day].copy()
+            if df_day.empty:
+                st.info(f"No hay cuotas impagas para el {sel_day.strftime('%d/%m/%Y')}.")
+            else:
+                ids_unicos = sorted(df_day["VentaID"].unique().tolist())
+                st.markdown("**IDs el " + sel_day.strftime("%d/%m/%Y") + ":** " + ", ".join(str(i) for i in ids_unicos))
+
+                # Tabla detallada con botón Elegir
+                show = df_day[["VentaID","Cuota","Monto","Cliente","Vendedor","Desc"]].rename(columns={
+                    "VentaID":"ID venta","Desc":"Descripción"
+                }).sort_values(["ID venta","Cuota"])
+                show["Seleccionar"] = show["ID venta"].apply(lambda i: f"?selid={int(i)}")
+
+                st.data_editor(
+                    show,
+                    hide_index=True,
+                    use_container_width=True,
+                    num_rows="fixed",
+                    column_config={
+                        "Monto": st.column_config.NumberColumn("Monto", step=0.01, format="%.2f"),
+                        "Seleccionar": st.column_config.LinkColumn(label="Seleccionar", display_text="Elegir",
+                                                                help="Ir al detalle de esta venta"),
+                    },
+                    key="cal_ids_del_dia",
+                )
+                st.markdown("[Quitar selección](#cal)")  # vuelve sin calday en la URL si recargás en "?" manualmente
+        else:
+            st.caption("Hacé click en un día del calendario para ver los IDs de ventas.")
+
         # ================== /CALENDARIO BONITO ==================
 
 

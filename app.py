@@ -2885,27 +2885,52 @@ with tab_cal:
                     ids_unicos = sorted(df_day["VentaID"].unique().tolist())
                     st.markdown("**IDs el " + sel_day.strftime("%d/%m/%Y") + ":** " + ", ".join(str(i) for i in ids_unicos))
 
-                    # Tabla detallada con botón Elegir
-                    show = df_day[["VentaID","Cuota","Monto","Cliente","Vendedor","Desc"]].rename(columns={
-                        "VentaID":"ID venta","Desc":"Descripción"
-                    }).sort_values(["ID venta","Cuota"])
-                    show["Seleccionar"] = show["ID venta"].apply(lambda i: f"?selid={int(i)}")
+                    # id previamente seleccionado (de la URL o de la sesión)
+                    selid_param = st.query_params.get("selid")
+                    if isinstance(selid_param, list):
+                        selid_param = selid_param[0] if selid_param else None
+                    prev_selid = int(selid_param) if (selid_param and str(selid_param).isdigit()) else st.session_state.get("cal_selid")
 
-                    st.data_editor(
+                    # tabla base
+                    show = df_day[["VentaID","Cuota","Monto","Cliente","Vendedor","Desc"]].rename(
+                        columns={"VentaID":"ID venta","Desc":"Descripción"}
+                    ).sort_values(["ID venta","Cuota"]).reset_index(drop=True)
+
+                    # columna Elegir (una sola True)
+                    show["Elegir"] = show["ID venta"].apply(lambda i: bool(prev_selid and int(i) == int(prev_selid)))
+
+                    edited = st.data_editor(
                         show,
                         hide_index=True,
                         use_container_width=True,
                         num_rows="fixed",
                         column_config={
                             "Monto": st.column_config.NumberColumn("Monto", step=0.01, format="%.2f"),
-                            "Seleccionar": st.column_config.LinkColumn(label="Seleccionar", display_text="Elegir",
-                                                                    help="Ir al detalle de esta venta"),
+                            "Elegir": st.column_config.CheckboxColumn(
+                                "Elegir",
+                                help="Selecciona este ID para gestionar",
+                                default=False
+                            ),
                         },
-                        key="cal_ids_del_dia",
+                        key="cal_ids_del_dia_editor",
                     )
-                    st.markdown("[Quitar selección](#cal)")  # vuelve sin calday en la URL si recargás en "?" manualmente
-            else:
-                st.caption("Hacé click en un día del calendario para ver los IDs de ventas.")
+
+                    # detectar selección nueva (enforce radio-like: una sola marcada)
+                    # tomamos la marcada que sea distinta del previo; si hay varias, nos quedamos con la primera
+                    marked = edited[edited["Elegir"]]
+                    new_selid = None
+                    if not marked.empty:
+                        # si hay varias marcadas, intentamos priorizar la que cambió (≠ prev_selid)
+                        if prev_selid is not None and (marked["ID venta"] != int(prev_selid)).any():
+                            new_selid = int(marked[marked["ID venta"] != int(prev_selid)]["ID venta"].iloc[0])
+                        else:
+                            new_selid = int(marked["ID venta"].iloc[0])
+
+                    # si hay un nuevo seleccionado distinto del anterior, persistimos y rerun
+                    if new_selid is not None and new_selid != prev_selid:
+                        st.session_state["cal_selid"] = new_selid
+                        st.query_params.update(selid=str(new_selid))   # soft update, no navega
+                        st.rerun()
 
             # ================== /CALENDARIO BONITO ==================
 

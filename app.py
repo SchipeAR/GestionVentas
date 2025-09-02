@@ -2671,36 +2671,78 @@ with tab_cal:
             for i, lab in enumerate(["Lun","Mar","Mié","Jue","Vie","Sáb","Dom"]):
                 cols_header[i].markdown(f"**{lab}**")
             
+            # ===== Estilo de tarjetas (solo para el calendario) =====
+            st.markdown("""
+            <style>
+            .cal-card {position:relative; height:116px; border-radius:14px; border:1px solid rgba(255,255,255,0.15);
+            padding:10px 12px; background: var(--card-bg, rgba(0,0,0,0.25)); box-shadow: 0 6px 18px rgba(0,0,0,.25);}
+            .cal-card .day {font-size:20px; font-weight:800; color:#fff; text-shadow:0 1px 2px rgba(0,0,0,.5);}
+            .cal-card .count {position:absolute; right:10px; top:8px; font-size:12px; font-weight:700;
+            background: rgba(0,0,0,.35); padding:2px 8px; border-radius:999px; color:#fff;}
+            .cal-card .total {position:absolute; left:12px; bottom:10px; font-size:13px; font-weight:800; color:#fff;}
+            .cal-card .chips {position:absolute; left:12px; right:12px; bottom:34px; display:flex; gap:6px; flex-wrap:wrap;}
+            .cal-card .chip {font-size:11px; padding:3px 8px; border-radius:999px; background: rgba(0,0,0,.35);
+            border:1px solid rgba(255,255,255,.25); color:#fff; font-weight:600; white-space:nowrap;}
+            .cal-card.empty {border-style:dashed; opacity:.35; background:transparent;}
+            .cal-card.selected {outline:2px solid #ffd54f; box-shadow: 0 0 0 3px rgba(255,213,79,.28) inset, 0 8px 24px rgba(0,0,0,.35);}
+            .cal-btn {margin-top:6px}
+            .cal-btn button {width:100%; border-radius:10px}
+            </style>
+            """, unsafe_allow_html=True)
+
+            # ===== Render de encabezado (Lun..Dom) =====
+            cols_header = st.columns(7)
+            for i, lab in enumerate(["Lun","Mar","Mié","Jue","Vie","Sáb","Dom"]):
+                cols_header[i].markdown(f"**{lab}**")
+
+            # ===== Grilla por semanas con tarjetas bonitas + botón Ver =====
             for w in weeks:
                 cols = st.columns(7, gap="small")
                 for j, d in enumerate(w):
                     if d == 0:
-                        cols[j].markdown(" ")  # celda vacía
+                        cols[j].markdown('<div class="cal-card empty"></div>', unsafe_allow_html=True)
                         continue
 
                     day = _date(int(anio), int(mes), int(d))
                     cnt = counts.get(day, 0)
                     ttl = totals.get(day, 0.0)
 
-                    # texto del botón (compacto)
-                    linea1 = f"{d:02d}"
-                    linea2 = f"{cnt} cuotas" if cnt else ""
-                    linea3 = fmt_money_up(ttl) if cnt else ""
-                    label = "\n".join([t for t in (linea1, linea2, linea3) if t])
+                    # chips de vendedores (top 3)
+                    vd = vend_by_day.get(day, {})
+                    pares = sorted(vd.items(), key=lambda kv: kv[1], reverse=True)
+                    chips = []
+                    for i2, (name, qty) in enumerate(pares[:3]):
+                        label = name if len(name)<=16 else name[:14]+"…"
+                        chips.append(f"<span class='chip' title='{name} ({qty})'>{label}{' ×'+str(qty) if qty>1 else ''}</span>")
+                    if len(pares) > 3:
+                        chips.append(f"<span class='chip'>+{len(pares)-3}</span>")
+                    chips_html = "<div class='chips'>" + "".join(chips) + "</div>" if chips else ""
 
-                    # marcar seleccionado
-                    k = f"calbtn_{anio}_{mes}_{d}"
-                    clicked = cols[j].button(label, key=k)
+                    # Intensidad según cantidad (fondo sutil)
+                    maxc = max(counts.values()) if counts else 1
+                    alpha = 0.10 + (0.75 * (cnt / maxc)) if cnt>0 else 0.0
+                    bg = f"linear-gradient(180deg, rgba(0,140,255,{alpha}) 0%, rgba(0,140,255,{alpha*0.55}) 100%)" if cnt>0 else "transparent"
+                    selected_cls = " selected" if (st.session_state.get("calday") and day == st.session_state["calday"]) else ""
 
-                    # hint visual opcional
-                    if sel_day and day == sel_day:
-                        cols[j].markdown(":yellow[**seleccionado**]")
+                    cols[j].markdown(
+                        f"""
+                        <div class="cal-card{selected_cls}" style="--card-bg:{bg}">
+                        <div class="day">{d:02d}</div>
+                        {'<div class="count">'+str(cnt)+'</div>' if cnt>0 else ''}
+                        {chips_html}
+                        {'<div class="total">'+fmt_money_up(ttl)+'</div>' if cnt>0 else ''}
+                        </div>
+                        """,
+                        unsafe_allow_html=True
+                    )
 
-                    if clicked:
+                    # Botón "Ver" (no navega, setea sesión + query param y rerun)
+                    if cols[j].button("Ver", key=f"calbtn_{anio}_{mes}_{d}", help="Ver IDs de este día", type="secondary"):
                         sel_day = day
-                        st.session_state["calday"] = day  # persistís en sesión
-                        st.query_params.update(calday=day.isoformat())  # pero sin navegar
+                        st.session_state["calday"] = day
+                        st.query_params.update(calday=day.isoformat())
                         st.rerun()
+
 
             def _seller_chips_html(day):
                 # hasta 3 chips visibles, el resto como "+N"

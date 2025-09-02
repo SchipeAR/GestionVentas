@@ -2577,300 +2577,300 @@ if is_admin_user:
                             st.success(f"Venta #{op['id']} eliminada ✅")
                             st.rerun()
 
+with tab_cal:
+    # --------- 📅 CALENDARIO DE COBROS ---------
+    st.markdown("### 🗓️ Calendario de cobros (cuotas impagas de VENTA)")
+    st.caption("Calendario mensual en formato cuadriculado. Cada casillero muestra cuántas cuotas impagas vencen ese día.")
 
-# --------- 📅 CALENDARIO DE COBROS ---------
-st.markdown("### 🗓️ Calendario de cobros (cuotas impagas de VENTA)")
-st.caption("Calendario mensual en formato cuadriculado. Cada casillero muestra cuántas cuotas impagas vencen ese día.")
+    # --- 1) Construcción de eventos impagos (si ya armás event_rows en otra parte, podés usarlo) ---
+    from datetime import date as _date
+    import calendar as _cal
 
-# --- 1) Construcción de eventos impagos (si ya armás event_rows en otra parte, podés usarlo) ---
-from datetime import date as _date
-import calendar as _cal
+    ops_all = list_operations(user_scope_filters({})) or []
 
-ops_all = list_operations(user_scope_filters({})) or []
+    event_rows = []
+    for op_ in ops_all:
+        cuotas = list_installments(op_["id"], is_purchase=False) or []
+        for c in cuotas:
+            if not bool(c["paid"]):
+                # fecha de vencimiento de cada cuota
+                base = parse_iso_or_today(op_.get("sale_date") or op_.get("created_at"))
+                due = add_months(base, max(int(c["idx"]) - 1, 0))
+                event_rows.append({
+                    "Fecha": due,                           # datetime/date
+                    "Vendedor": op_.get("zona") or "",
+                    "Cliente": op_.get("cliente") or "",
+                    "VentaID": op_["id"],
+                    "Cuota": int(c["idx"]),
+                    "Monto": float(c["amount"]),
+                    "Desc": op_.get("descripcion") or "",
+                })
 
-event_rows = []
-for op_ in ops_all:
-    cuotas = list_installments(op_["id"], is_purchase=False) or []
-    for c in cuotas:
-        if not bool(c["paid"]):
-            # fecha de vencimiento de cada cuota
-            base = parse_iso_or_today(op_.get("sale_date") or op_.get("created_at"))
-            due = add_months(base, max(int(c["idx"]) - 1, 0))
-            event_rows.append({
-                "Fecha": due,                           # datetime/date
-                "Vendedor": op_.get("zona") or "",
-                "Cliente": op_.get("cliente") or "",
-                "VentaID": op_["id"],
-                "Cuota": int(c["idx"]),
-                "Monto": float(c["amount"]),
-                "Desc": op_.get("descripcion") or "",
-            })
-
-if not event_rows:
-    st.info("No hay cuotas impagas próximas para mostrar.")
-else:
-    cal_df = pd.DataFrame(event_rows)
-    # Asegurar datetime
-    cal_df["Fecha"] = pd.to_datetime(cal_df["Fecha"], errors="coerce").dt.tz_localize(None)
-    cal_df = cal_df.dropna(subset=["Fecha"])
-
-    # --- 2) Selección de mes/año ---
-    c1, c2 = st.columns(2)
-    with c1:
-        anio = st.number_input("Año", min_value=2000, max_value=2100, value=date.today().year, step=1)
-    with c2:
-        mes = st.number_input("Mes", min_value=1, max_value=12, value=date.today().month, step=1)
-
-    # Filtrar al mes/año elegidos
-    cal_df = cal_df[(cal_df["Fecha"].dt.year == anio) & (cal_df["Fecha"].dt.month == mes)]
-    sel_day = None
-    try:
-        _param = st.query_params.get("calday")
-        if isinstance(_param, list):
-            _param = _param[0] if _param else None
-        sel_day = _dt.strptime(_param, "%Y-%m-%d").date() if _param else None
-    except Exception:
-        sel_day = None
-    sel_day = st.session_state.get("calday") or sel_day
-    if cal_df.empty:
-        st.warning("No hay cuotas impagas en el mes seleccionado.")
+    if not event_rows:
+        st.info("No hay cuotas impagas próximas para mostrar.")
     else:
-        # --- 3) Agregados por día ---
-        # Conteo por día y total monto (para tooltip)
-        by_day = (
-            cal_df.groupby(cal_df["Fecha"].dt.date)
-                  .agg(cuotas=("Cuota", "count"), total=("Monto", "sum"))
-                  .reset_index()
-        )
-        # Diccionarios día -> métricas
-        counts = {r["Fecha"]: int(r["cuotas"]) for _, r in by_day.iterrows()}
-        totals = {r["Fecha"]: float(r["total"]) for _, r in by_day.iterrows()}
-        max_count = max(counts.values()) if counts else 1
+        cal_df = pd.DataFrame(event_rows)
+        # Asegurar datetime
+        cal_df["Fecha"] = pd.to_datetime(cal_df["Fecha"], errors="coerce").dt.tz_localize(None)
+        cal_df = cal_df.dropna(subset=["Fecha"])
 
-        
+        # --- 2) Selección de mes/año ---
+        c1, c2 = st.columns(2)
+        with c1:
+            anio = st.number_input("Año", min_value=2000, max_value=2100, value=date.today().year, step=1)
+        with c2:
+            mes = st.number_input("Mes", min_value=1, max_value=12, value=date.today().month, step=1)
 
-        # ================== CALENDARIO BONITO + VENDEDORES ==================
-        import calendar as _cal
-        from collections import Counter
-        from datetime import date as _date
+        # Filtrar al mes/año elegidos
+        cal_df = cal_df[(cal_df["Fecha"].dt.year == anio) & (cal_df["Fecha"].dt.month == mes)]
+        sel_day = None
+        try:
+            _param = st.query_params.get("calday")
+            if isinstance(_param, list):
+                _param = _param[0] if _param else None
+            sel_day = _dt.strptime(_param, "%Y-%m-%d").date() if _param else None
+        except Exception:
+            sel_day = None
+        sel_day = st.session_state.get("calday") or sel_day
+        if cal_df.empty:
+            st.warning("No hay cuotas impagas en el mes seleccionado.")
+        else:
+            # --- 3) Agregados por día ---
+            # Conteo por día y total monto (para tooltip)
+            by_day = (
+                cal_df.groupby(cal_df["Fecha"].dt.date)
+                    .agg(cuotas=("Cuota", "count"), total=("Monto", "sum"))
+                    .reset_index()
+            )
+            # Diccionarios día -> métricas
+            counts = {r["Fecha"]: int(r["cuotas"]) for _, r in by_day.iterrows()}
+            totals = {r["Fecha"]: float(r["total"]) for _, r in by_day.iterrows()}
+            max_count = max(counts.values()) if counts else 1
 
-        # vendedores por día (y cuántas cuotas tiene cada uno ese día)
-        vend_by_day = {}
-        for _, r in cal_df.iterrows():
-            d = r["Fecha"].date()
-            v = (r.get("Vendedor") or "").strip() or "—"
-            vend_by_day.setdefault(d, Counter())
-            vend_by_day[d][v] += 1
+            
 
-        _cal.setfirstweekday(_cal.MONDAY)
-        weeks = _cal.monthcalendar(int(anio), int(mes))
-        max_count = max(counts.values()) if counts else 1
-        st.write("")
+            # ================== CALENDARIO BONITO + VENDEDORES ==================
+            import calendar as _cal
+            from collections import Counter
+            from datetime import date as _date
 
-        cols_header = st.columns(7)
-        for i, lab in enumerate(["Lun","Mar","Mié","Jue","Vie","Sáb","Dom"]):
-            cols_header[i].markdown(f"**{lab}**")
-        
-        for w in weeks:
-            cols = st.columns(7, gap="small")
-            for j, d in enumerate(w):
+            # vendedores por día (y cuántas cuotas tiene cada uno ese día)
+            vend_by_day = {}
+            for _, r in cal_df.iterrows():
+                d = r["Fecha"].date()
+                v = (r.get("Vendedor") or "").strip() or "—"
+                vend_by_day.setdefault(d, Counter())
+                vend_by_day[d][v] += 1
+
+            _cal.setfirstweekday(_cal.MONDAY)
+            weeks = _cal.monthcalendar(int(anio), int(mes))
+            max_count = max(counts.values()) if counts else 1
+            st.write("")
+
+            cols_header = st.columns(7)
+            for i, lab in enumerate(["Lun","Mar","Mié","Jue","Vie","Sáb","Dom"]):
+                cols_header[i].markdown(f"**{lab}**")
+            
+            for w in weeks:
+                cols = st.columns(7, gap="small")
+                for j, d in enumerate(w):
+                    if d == 0:
+                        cols[j].markdown(" ")  # celda vacía
+                        continue
+
+                    day = _date(int(anio), int(mes), int(d))
+                    cnt = counts.get(day, 0)
+                    ttl = totals.get(day, 0.0)
+
+                    # texto del botón (compacto)
+                    linea1 = f"{d:02d}"
+                    linea2 = f"{cnt} cuotas" if cnt else ""
+                    linea3 = fmt_money_up(ttl) if cnt else ""
+                    label = "\n".join([t for t in (linea1, linea2, linea3) if t])
+
+                    # marcar seleccionado
+                    k = f"calbtn_{anio}_{mes}_{d}"
+                    clicked = cols[j].button(label, key=k)
+
+                    # hint visual opcional
+                    if sel_day and day == sel_day:
+                        cols[j].markdown(":yellow[**seleccionado**]")
+
+                    if clicked:
+                        sel_day = day
+                        st.session_state["calday"] = day  # persistís en sesión
+                        st.query_params.update(calday=day.isoformat())  # pero sin navegar
+                        st.rerun()
+
+            def _seller_chips_html(day):
+                # hasta 3 chips visibles, el resto como "+N"
+                c = vend_by_day.get(day, {})
+                if not c:
+                    return ""
+                # ordenar por más cuotas
+                pares = sorted(c.items(), key=lambda kv: kv[1], reverse=True)
+                chips = []
+                for i, (name, qty) in enumerate(pares):
+                    if i >= 3:
+                        break
+                    # abreviar nombres largos a 16 chars para que no rompan la caja
+                    label = name if len(name) <= 16 else (name[:14] + "…")
+                    extra = f" ×{qty}" if qty > 1 else ""
+                    chips.append(f"<span class='chip' title='{name} ({qty})'>{label}{extra}</span>")
+                if len(pares) > 3:
+                    chips.append(f"<span class='chip more'>+{len(pares)-3}</span>")
+                return "<div class='chips'>" + "".join(chips) + "</div>"
+
+            def _cell_html(d):
                 if d == 0:
-                    cols[j].markdown(" ")  # celda vacía
-                    continue
-
+                    return '<td class="empty"></td>'
                 day = _date(int(anio), int(mes), int(d))
                 cnt = counts.get(day, 0)
                 ttl = totals.get(day, 0.0)
 
-                # texto del botón (compacto)
-                linea1 = f"{d:02d}"
-                linea2 = f"{cnt} cuotas" if cnt else ""
-                linea3 = fmt_money_up(ttl) if cnt else ""
-                label = "\n".join([t for t in (linea1, linea2, linea3) if t])
+                # Intensidad/gradiente según cantidad
+                alpha = 0.10 + (0.75 * (cnt / max_count)) if cnt > 0 else 0.0
+                bg = f"linear-gradient(180deg, rgba(0,140,255,{alpha}) 0%, rgba(0,140,255,{alpha*0.55}) 100%)" if cnt > 0 else "var(--cell-bg)"
+                border = "rgba(0,140,255,0.35)" if cnt > 0 else "var(--cell-border)"
 
-                # marcar seleccionado
-                k = f"calbtn_{anio}_{mes}_{d}"
-                clicked = cols[j].button(label, key=k)
+                chips = _seller_chips_html(day)
 
-                # hint visual opcional
-                if sel_day and day == sel_day:
-                    cols[j].markdown(":yellow[**seleccionado**]")
+                total_text = fmt_money_up(ttl) if cnt > 0 else ""
+                count_text = str(cnt) if cnt > 0 else ""
 
-                if clicked:
-                    sel_day = day
-                    st.session_state["calday"] = day  # persistís en sesión
-                    st.query_params.update(calday=day.isoformat())  # pero sin navegar
-                    st.rerun()
+                selected_cls = " selected" if (sel_day and day == sel_day) else ""
+                href = f"?calday={day.isoformat()}#cal"
 
-        def _seller_chips_html(day):
-            # hasta 3 chips visibles, el resto como "+N"
-            c = vend_by_day.get(day, {})
-            if not c:
-                return ""
-            # ordenar por más cuotas
-            pares = sorted(c.items(), key=lambda kv: kv[1], reverse=True)
-            chips = []
-            for i, (name, qty) in enumerate(pares):
-                if i >= 3:
-                    break
-                # abreviar nombres largos a 16 chars para que no rompan la caja
-                label = name if len(name) <= 16 else (name[:14] + "…")
-                extra = f" ×{qty}" if qty > 1 else ""
-                chips.append(f"<span class='chip' title='{name} ({qty})'>{label}{extra}</span>")
-            if len(pares) > 3:
-                chips.append(f"<span class='chip more'>+{len(pares)-3}</span>")
-            return "<div class='chips'>" + "".join(chips) + "</div>"
+                return f"""
+                <td class="cell{selected_cls}" style="--bg:{bg}; --border:{border}">
+                    <a class="hit" href="{href}" title="Ver IDs del {d:02d}"></a>
+                    <div class="day">{d:02d}</div>
+                    <div class="count" title="Cuotas: {count_text}">{count_text}</div>
+                    {chips}
+                    <div class="total">{total_text}</div>
+                </td>
+                """
 
-        def _cell_html(d):
-            if d == 0:
-                return '<td class="empty"></td>'
-            day = _date(int(anio), int(mes), int(d))
-            cnt = counts.get(day, 0)
-            ttl = totals.get(day, 0.0)
+            rows_html = "".join("<tr>" + "".join(_cell_html(d) for d in w) + "</tr>" for w in weeks)
 
-            # Intensidad/gradiente según cantidad
-            alpha = 0.10 + (0.75 * (cnt / max_count)) if cnt > 0 else 0.0
-            bg = f"linear-gradient(180deg, rgba(0,140,255,{alpha}) 0%, rgba(0,140,255,{alpha*0.55}) 100%)" if cnt > 0 else "var(--cell-bg)"
-            border = "rgba(0,140,255,0.35)" if cnt > 0 else "var(--cell-border)"
+            cal_html = f"""
+            <style>
+                :root {{
+                    --cell-bg: transparent;
+                    --cell-border: rgba(255,255,255,0.12);
+                    --shadow: 0 4px 16px rgba(0,0,0,0.25);
+                }}
+                .cal {{
+                    width: 100%;
+                    border-collapse: separate;
+                    border-spacing: 10px;
+                    table-layout: fixed;
+                    margin-top: 6px;
+                }}
+                .cal th {{
+                    text-align:center; font-weight:700; padding:8px; color:#fff;
+                }}
+                .cal td.cell {{
+                    height: 108px;
+                    border:1px solid var(--cell-border);
+                    border-radius:14px;
+                    position:relative;
+                    background: var(--bg);
+                    box-shadow: var(--shadow);
+                    overflow:hidden;
+                    transition: transform .08s ease-out, box-shadow .12s ease-out;
+                }}
+                .cal td.cell:hover {{
+                    transform: translateY(-2px);
+                    box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+                }}
+                .cal td.empty {{
+                    height: 108px;
+                    border:1px dashed rgba(255,255,255,0.10);
+                    border-radius:14px; opacity:.35;
+                }}
+                .cal .day {{
+                    position:absolute; left:10px; top:8px;
+                    font-size:13px; font-weight:600;
+                    color:#fff; text-shadow:0 1px 2px rgba(0,0,0,0.6);
+                }}
+                .cal .count {{
+                    position:absolute; right:10px; top:8px;
+                    font-size:13px; font-weight:700;
+                    background: rgba(0,0,0,0.35);
+                    padding:2px 6px; border-radius:999px;
+                    color:#fff; text-shadow:0 1px 2px rgba(0,0,0,0.6);
+                }}
+                .cal .total {{
+                    position:absolute; left:10px; bottom:8px;
+                    font-size:13px; font-weight:700;
+                    color:#fff; text-shadow:0 1px 2px rgba(0,0,0,0.6);
+                }}
+                .cal .chips {{
+                    position:absolute; left:10px; right:10px; bottom:32px;
+                    display:flex; flex-wrap:wrap; gap:6px;
+                }}
+                .cal .chip {{
+                    font-size:11px; padding:3px 8px; border-radius:10px;
+                    background: rgba(0,0,0,0.4);
+                    border:1px solid rgba(255,255,255,0.25);
+                    color:#fff; font-weight:600;
+                    white-space:nowrap; max-width: 100%;
+                    text-overflow: ellipsis; overflow:hidden;
+                    text-shadow:0 1px 2px rgba(0,0,0,0.7);
+                }}
+                .cal .chip.more {{
+                    background: rgba(0,0,0,0.25); font-weight:700; color:#fff;
+                }}
+                .cal td.cell .hit{{
+                    position:absolute; inset:0; z-index:5; cursor:pointer; text-decoration:none;
+                }}
+                .cal td.cell.selected{{
+                    outline:2px solid #ffd54f; box-shadow: 0 0 0 3px rgba(255,213,79,.28) inset, var(--shadow);
+                }}
+                </style>
 
-            chips = _seller_chips_html(day)
-
-            total_text = fmt_money_up(ttl) if cnt > 0 else ""
-            count_text = str(cnt) if cnt > 0 else ""
-
-            selected_cls = " selected" if (sel_day and day == sel_day) else ""
-            href = f"?calday={day.isoformat()}#cal"
-
-            return f"""
-            <td class="cell{selected_cls}" style="--bg:{bg}; --border:{border}">
-                <a class="hit" href="{href}" title="Ver IDs del {d:02d}"></a>
-                <div class="day">{d:02d}</div>
-                <div class="count" title="Cuotas: {count_text}">{count_text}</div>
-                {chips}
-                <div class="total">{total_text}</div>
-            </td>
+            <table class="cal">
+            <thead><tr>
+                <th>Lun</th><th>Mar</th><th>Mié</th><th>Jue</th><th>Vie</th><th>Sáb</th><th>Dom</th>
+            </tr></thead>
+            <tbody>{rows_html}</tbody>
+            </table>
             """
+            st.markdown('<a id="cal"></a>', unsafe_allow_html=True)
+            st_html(cal_html, height=(len(weeks) * 140 + 120))
+            # === Listado de IDs para el día seleccionado ===
+            if sel_day:
+                df_day = cal_df[cal_df["Fecha"].dt.date == sel_day].copy()
+                if df_day.empty:
+                    st.info(f"No hay cuotas impagas para el {sel_day.strftime('%d/%m/%Y')}.")
+                else:
+                    ids_unicos = sorted(df_day["VentaID"].unique().tolist())
+                    st.markdown("**IDs el " + sel_day.strftime("%d/%m/%Y") + ":** " + ", ".join(str(i) for i in ids_unicos))
 
-        rows_html = "".join("<tr>" + "".join(_cell_html(d) for d in w) + "</tr>" for w in weeks)
+                    # Tabla detallada con botón Elegir
+                    show = df_day[["VentaID","Cuota","Monto","Cliente","Vendedor","Desc"]].rename(columns={
+                        "VentaID":"ID venta","Desc":"Descripción"
+                    }).sort_values(["ID venta","Cuota"])
+                    show["Seleccionar"] = show["ID venta"].apply(lambda i: f"?selid={int(i)}")
 
-        cal_html = f"""
-        <style>
-            :root {{
-                --cell-bg: transparent;
-                --cell-border: rgba(255,255,255,0.12);
-                --shadow: 0 4px 16px rgba(0,0,0,0.25);
-            }}
-            .cal {{
-                width: 100%;
-                border-collapse: separate;
-                border-spacing: 10px;
-                table-layout: fixed;
-                margin-top: 6px;
-            }}
-            .cal th {{
-                text-align:center; font-weight:700; padding:8px; color:#fff;
-            }}
-            .cal td.cell {{
-                height: 108px;
-                border:1px solid var(--cell-border);
-                border-radius:14px;
-                position:relative;
-                background: var(--bg);
-                box-shadow: var(--shadow);
-                overflow:hidden;
-                transition: transform .08s ease-out, box-shadow .12s ease-out;
-            }}
-            .cal td.cell:hover {{
-                transform: translateY(-2px);
-                box-shadow: 0 8px 24px rgba(0,0,0,0.35);
-            }}
-            .cal td.empty {{
-                height: 108px;
-                border:1px dashed rgba(255,255,255,0.10);
-                border-radius:14px; opacity:.35;
-            }}
-            .cal .day {{
-                position:absolute; left:10px; top:8px;
-                font-size:13px; font-weight:600;
-                color:#fff; text-shadow:0 1px 2px rgba(0,0,0,0.6);
-            }}
-            .cal .count {{
-                position:absolute; right:10px; top:8px;
-                font-size:13px; font-weight:700;
-                background: rgba(0,0,0,0.35);
-                padding:2px 6px; border-radius:999px;
-                color:#fff; text-shadow:0 1px 2px rgba(0,0,0,0.6);
-            }}
-            .cal .total {{
-                position:absolute; left:10px; bottom:8px;
-                font-size:13px; font-weight:700;
-                color:#fff; text-shadow:0 1px 2px rgba(0,0,0,0.6);
-            }}
-            .cal .chips {{
-                position:absolute; left:10px; right:10px; bottom:32px;
-                display:flex; flex-wrap:wrap; gap:6px;
-            }}
-            .cal .chip {{
-                font-size:11px; padding:3px 8px; border-radius:10px;
-                background: rgba(0,0,0,0.4);
-                border:1px solid rgba(255,255,255,0.25);
-                color:#fff; font-weight:600;
-                white-space:nowrap; max-width: 100%;
-                text-overflow: ellipsis; overflow:hidden;
-                text-shadow:0 1px 2px rgba(0,0,0,0.7);
-            }}
-            .cal .chip.more {{
-                background: rgba(0,0,0,0.25); font-weight:700; color:#fff;
-            }}
-            .cal td.cell .hit{{
-                position:absolute; inset:0; z-index:5; cursor:pointer; text-decoration:none;
-            }}
-            .cal td.cell.selected{{
-                outline:2px solid #ffd54f; box-shadow: 0 0 0 3px rgba(255,213,79,.28) inset, var(--shadow);
-            }}
-            </style>
-
-        <table class="cal">
-        <thead><tr>
-            <th>Lun</th><th>Mar</th><th>Mié</th><th>Jue</th><th>Vie</th><th>Sáb</th><th>Dom</th>
-        </tr></thead>
-        <tbody>{rows_html}</tbody>
-        </table>
-        """
-        st.markdown('<a id="cal"></a>', unsafe_allow_html=True)
-        st_html(cal_html, height=(len(weeks) * 140 + 120))
-        # === Listado de IDs para el día seleccionado ===
-        if sel_day:
-            df_day = cal_df[cal_df["Fecha"].dt.date == sel_day].copy()
-            if df_day.empty:
-                st.info(f"No hay cuotas impagas para el {sel_day.strftime('%d/%m/%Y')}.")
+                    st.data_editor(
+                        show,
+                        hide_index=True,
+                        use_container_width=True,
+                        num_rows="fixed",
+                        column_config={
+                            "Monto": st.column_config.NumberColumn("Monto", step=0.01, format="%.2f"),
+                            "Seleccionar": st.column_config.LinkColumn(label="Seleccionar", display_text="Elegir",
+                                                                    help="Ir al detalle de esta venta"),
+                        },
+                        key="cal_ids_del_dia",
+                    )
+                    st.markdown("[Quitar selección](#cal)")  # vuelve sin calday en la URL si recargás en "?" manualmente
             else:
-                ids_unicos = sorted(df_day["VentaID"].unique().tolist())
-                st.markdown("**IDs el " + sel_day.strftime("%d/%m/%Y") + ":** " + ", ".join(str(i) for i in ids_unicos))
+                st.caption("Hacé click en un día del calendario para ver los IDs de ventas.")
 
-                # Tabla detallada con botón Elegir
-                show = df_day[["VentaID","Cuota","Monto","Cliente","Vendedor","Desc"]].rename(columns={
-                    "VentaID":"ID venta","Desc":"Descripción"
-                }).sort_values(["ID venta","Cuota"])
-                show["Seleccionar"] = show["ID venta"].apply(lambda i: f"?selid={int(i)}")
-
-                st.data_editor(
-                    show,
-                    hide_index=True,
-                    use_container_width=True,
-                    num_rows="fixed",
-                    column_config={
-                        "Monto": st.column_config.NumberColumn("Monto", step=0.01, format="%.2f"),
-                        "Seleccionar": st.column_config.LinkColumn(label="Seleccionar", display_text="Elegir",
-                                                                help="Ir al detalle de esta venta"),
-                    },
-                    key="cal_ids_del_dia",
-                )
-                st.markdown("[Quitar selección](#cal)")  # vuelve sin calday en la URL si recargás en "?" manualmente
-        else:
-            st.caption("Hacé click en un día del calendario para ver los IDs de ventas.")
-
-        # ================== /CALENDARIO BONITO ==================
+            # ================== /CALENDARIO BONITO ==================
 
 
 

@@ -1522,10 +1522,13 @@ with tab_listar:
             else:
                 df_show = df_ops
             
-            cols_hide_base = ["Inversor", "Ganancia", "Costo", "Precio Compra"] if seller_flag else []
-            cols_hide_uno = ["Cuotas", "Cuotas pendientes", "Comisión x cuota", "Estado"] if key_prefix == "uno" else []
-
-            cols_to_hide = cols_hide_base + cols_hide_uno
+            fullcols = st.toggle("Vista completa (todas las columnas)", value=False, key=f"{key_prefix}_fullcols")
+            PERSONAL_HIDE_ALWAYS = ["Proveedor", "Venta", "Costo", "Inversor", "Ganancia"]       # <-- editá a gusto
+            PERSONAL_HIDE_SOLO_UNO = ["Cuotas", "Cuotas pendientes", "Comisión x cuota", "Estado"]  # ya las ocultábamos en 'uno'
+            cols_hide_base = ["Inversor", "Ganancia", "Costo", "Precio Compra"] if (seller_flag and not fullcols) else []
+            cols_hide_uno = ["Cuotas", "Cuotas pendientes", "Comisión x cuota", "Estado"] if (key_prefix == "uno" and not fullcols) else []
+            cols_personal = (PERSONAL_HIDE_ALWAYS + (PERSONAL_HIDE_SOLO_UNO if key_prefix == "uno" else [])) if not fullcols else []
+            cols_to_hide  = (cols_hide_base + cols_hide_uno + cols_personal) if not fullcols else []
             df_show = df_ops.drop(columns=cols_to_hide, errors="ignore")
             # Config: checkbox solo en VENTA (en COMPRA queda en blanco)
             colcfg = {
@@ -1546,9 +1549,15 @@ with tab_listar:
                 hide_index=True,
                 use_container_width=True,
                 num_rows="fixed",
-                column_config=colcfg,
-                key=f"{key_prefix}_listado_editor"
-            )
+                column_config={
+                    "Seleccionar": st.column_config.LinkColumn(
+                        label="Seleccionar",
+                        help="Click para gestionar este ID",
+                        display_text="Elegir"
+                    )
+                },
+                key=f"{key_prefix}_listado_editor",
+)
             # Procesar selección detectando el casillero NUEVO y sin loop infinito
             try:
                 ventas = edited[edited["Tipo"] == "VENTA"]

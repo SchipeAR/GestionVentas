@@ -2690,11 +2690,6 @@ with tab_cal:
             </style>
             """, unsafe_allow_html=True)
 
-            # ===== Render de encabezado (Lun..Dom) =====
-            cols_header = st.columns(7)
-            for i, lab in enumerate(["Lun","Mar","Mié","Jue","Vie","Sáb","Dom"]):
-                cols_header[i].markdown(f"**{lab}**")
-
             # ===== Grilla por semanas con tarjetas bonitas + botón Ver =====
             for w in weeks:
                 cols = st.columns(7, gap="small")

@@ -2631,6 +2631,7 @@ else:
         sel_day = _dt.strptime(_param, "%Y-%m-%d").date() if _param else None
     except Exception:
         sel_day = None
+    sel_day = st.session_state.get("calday") or sel_day
     if cal_df.empty:
         st.warning("No hay cuotas impagas en el mes seleccionado.")
     else:
@@ -2664,6 +2665,42 @@ else:
         _cal.setfirstweekday(_cal.MONDAY)
         weeks = _cal.monthcalendar(int(anio), int(mes))
         max_count = max(counts.values()) if counts else 1
+        st.write("")
+
+        cols_header = st.columns(7)
+        for i, lab in enumerate(["Lun","Mar","Mié","Jue","Vie","Sáb","Dom"]):
+            cols_header[i].markdown(f"**{lab}**")
+        
+        for w in weeks:
+            cols = st.columns(7, gap="small")
+            for j, d in enumerate(w):
+                if d == 0:
+                    cols[j].markdown(" ")  # celda vacía
+                    continue
+
+                day = _date(int(anio), int(mes), int(d))
+                cnt = counts.get(day, 0)
+                ttl = totals.get(day, 0.0)
+
+                # texto del botón (compacto)
+                linea1 = f"{d:02d}"
+                linea2 = f"{cnt} cuotas" if cnt else ""
+                linea3 = fmt_money_up(ttl) if cnt else ""
+                label = "\n".join([t for t in (linea1, linea2, linea3) if t])
+
+                # marcar seleccionado
+                k = f"calbtn_{anio}_{mes}_{d}"
+                clicked = cols[j].button(label, key=k)
+
+                # hint visual opcional
+                if sel_day and day == sel_day:
+                    cols[j].markdown(":yellow[**seleccionado**]")
+
+                if clicked:
+                    sel_day = day
+                    st.session_state["calday"] = day  # persistís en sesión
+                    st.query_params.update(calday=day.isoformat())  # pero sin navegar
+                    st.rerun()
 
         def _seller_chips_html(day):
             # hasta 3 chips visibles, el resto como "+N"

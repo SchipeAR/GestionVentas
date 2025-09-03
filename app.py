@@ -15,6 +15,7 @@ import urllib.parse
 import time
 import unicodedata
 import re
+import io
 
 
 st.set_page_config(layout="wide")

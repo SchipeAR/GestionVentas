@@ -25,6 +25,97 @@ group_esim_sim = st.session_state.get("group_esim_sim", True)
 show_full      = st.session_state.get("show_full", False)
 margin_usd     = st.session_state.get("margin_usd", 30.0)
 
+# === VISTA PÚBLICA (solo Modelo + Valor Venta) =========================
+# Uso: https://TU-URL-STREAMLIT/?public=1
+params = st.query_params
+pub = params.get("public")
+if isinstance(pub, list):
+    pub = pub[0] if pub else None
+
+if str(pub or "0") == "1":
+    st.title("🟢 Stock iPhone — Vista pública")
+
+    try:
+        with sqlite3.connect(DB_PATH) as con:
+            dfpub = pd.read_sql(
+                'SELECT "Modelo", "Valor Venta (USD)" FROM latest_stock',
+                con
+            )
+        # Tabla (solo 2 columnas)
+        st.dataframe(dfpub, use_container_width=True)
+
+        # Texto WhatsApp (no reinicia la app)
+        price_col = "Valor Venta (USD)"
+        lines = [f"▪️{r['Modelo']} - $ {int(round(float(r[price_col])))}"
+                 for _, r in dfpub.iterrows()]
+        msg = "\n".join(lines)
+
+        import streamlit.components.v1 as components
+        import io
+        from io import BytesIO
+
+        components.html(f"""
+<div style='display:flex;gap:8px;align-items:center;margin:10px 0 8px;'>
+  <button id='copyBtn'>Copiar Lista Whatsapp</button>
+</div>
+<textarea id='wa' rows='12' style='width:100%;'>{msg}</textarea>
+<script>
+const btn = document.getElementById('copyBtn');
+btn.addEventListener('click', async () => {{
+  const ta = document.getElementById('wa');
+  ta.select();
+  try {{ await navigator.clipboard.writeText(ta.value); }} catch(e) {{ document.execCommand('copy'); }}
+}});
+</script>
+        """, height=260)
+
+        # Descargar Excel (solo 2 columnas), bien formateado
+        buf = BytesIO()
+        with pd.ExcelWriter(buf, engine="openpyxl") as writer:
+            dfpub.to_excel(writer, index=False, sheet_name="Lista")
+            ws = writer.sheets["Lista"]
+
+            # Ajuste de columnas + estilos
+            from openpyxl.utils import get_column_letter
+            from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
+
+            for idx, col in enumerate(dfpub.columns, start=1):
+                maxlen = max(len(str(col)), *[len(str(x)) for x in dfpub[col].astype(str).values])
+                ws.column_dimensions[get_column_letter(idx)].width = min(maxlen + 4, 60)
+
+            header_font = Font(bold=True, color="FFFFFF")
+            header_fill = PatternFill("solid", fgColor="4F81BD")
+            thin = Side(style="thin", color="D9D9D9")
+            border = Border(top=thin, bottom=thin, left=thin, right=thin)
+            for cell in ws[1]:
+                cell.font = header_font
+                cell.fill = header_fill
+                cell.alignment = Alignment(horizontal="center", vertical="center")
+                cell.border = border
+
+            # Formato moneda en la 2da columna
+            for row in ws.iter_rows(min_row=2, min_col=2, max_col=2, max_row=ws.max_row):
+                for cell in row:
+                    cell.number_format = '"$"#,##0'
+                    cell.alignment = Alignment(horizontal="right")
+
+            ws.freeze_panes = "A2"
+            ws.auto_filter.ref = ws.dimensions
+
+        buf.seek(0)
+        st.download_button(
+            "⬇️ Descargar Excel (Vista pública)",
+            data=buf.getvalue(),
+            file_name="lista_whatsapp_publica.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+
+    except Exception:
+        st.warning("Aún no hay stock publicado. Procesá en la vista de admin para publicarlo.")
+    st.stop()
+# =======================================================================
+
+
 st.markdown("""
 <style>
 /* Ancho total y menos padding lateral */
@@ -471,6 +562,12 @@ def exportar_a_sheets_webapp_desde_sqlite(db_path: str):
 # =========================
 # DB Helpers & Migrations
 # =========================
+def publish_public_view(show_df: pd.DataFrame):
+    # Guarda solo las 2 columnas visibles públicamente
+    df_public = show_df[["Modelo", "Valor Venta (USD)"]].copy()
+    with sqlite3.connect(DB_PATH) as con:
+        df_public.to_sql("latest_stock", con, if_exists="replace", index=False)
+
 def get_conn():
     con = sqlite3.connect(DB_PATH, check_same_thread=False)
     con.execute("PRAGMA foreign_keys = ON;")
@@ -2780,6 +2877,8 @@ if is_admin_user:
 
             st.subheader("🏆 Mejor precio por modelo")
             st.dataframe(show, use_container_width=True)
+            publish_public_view(show)
+            st.caption("📣 Vista pública actualizada. Compartí tu URL con ?public=1")
 
             # Botón para generar lista WhatsApp
             # Lista para WhatsApp (persistente, con botón de copiar que NO re-ejecuta el script)

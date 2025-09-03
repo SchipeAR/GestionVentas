@@ -21,6 +21,9 @@ from urllib.parse import urlparse
 
 
 st.set_page_config(layout="wide")
+group_esim_sim = st.session_state.get("group_esim_sim", True)
+show_full      = st.session_state.get("show_full", False)
+margin_usd     = st.session_state.get("margin_usd", 30.0)
 
 st.markdown("""
 <style>
@@ -2670,6 +2673,20 @@ if is_admin_user:
                             st.rerun()
 if is_admin_user:
     with tab_stock:
+        with st.expander("⚙️ Opciones"):
+            group_esim_sim = st.checkbox("Tratar SIM y eSIM como el mismo modelo",
+                                        value=bool(group_esim_sim))
+            st.session_state["group_esim_sim"] = group_esim_sim
+
+            show_full = st.checkbox("Mostrar tabla completa de líneas parseadas",
+                                    value=bool(show_full))
+            st.session_state["show_full"] = show_full
+
+            margin_usd = st.number_input("Ganancia / margen (USD)",
+                                        min_value=0.0,
+                                        value=float(margin_usd),
+                                        step=1.0)
+            st.session_state["margin_usd"] = margin_usd
         with st.expander("📇 Gestión de proveedores (opcional)"):
             # Inicializar y mostrar proveedores registrados
             def _init_providers_db():

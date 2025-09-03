@@ -13,6 +13,7 @@ import hashlib
 import json
 import urllib.parse
 import time
+import unicodedata
 
 
 st.set_page_config(layout="wide")
@@ -621,6 +622,93 @@ def set_installment_note(iid: int, note: str, updated_at_iso: str | None = None)
         """, (iid, note, updated_at_iso or to_iso(date.today())))
         con.commit()
 
+# ------------------- Utilidades de normalización -------------------
+def normalize_text(t: str) -> str:
+    t = unicodedata.normalize('NFKD', t)
+    # bullets, dashes, asterisks, rare unicode
+    t = t.replace('▪️',' ').replace('•',' ').replace('—','-')
+    # normalize spaces and uppercase
+    t = t.upper()
+    t = re.sub(r'[ \t]+', ' ', t)
+    return t
+
+# ------------------- Parser principal -------------------
+def parse_lines(vendor: str, text: str) -> pd.DataFrame:
+    text = normalize_text(text)
+    rows = []
+    for raw in text.splitlines():
+        line = raw.strip(' -*\u2022')
+        if not line:
+            continue
+
+        # precio (USD o $)
+        m_price = re.search(r'(?:USD|\$)\s*([0-9]+(?:[.,][0-9]+)?)', line)
+        if not m_price:
+            continue
+        price = float(m_price.group(1).replace(',', '.'))
+
+        # sacar colores/observaciones entre ( )
+        core = re.sub(r'\([^)]*\)', '', line)
+
+        # SIM/eSIM
+        sim = 'ESIM' if 'ESIM' in core else ('SIM' if ' SIM ' in core or core.endswith(' SIM') else None)
+
+        # storage
+        storage_label = None
+        storage_gb = None
+        m_tb = re.search(r'\b(\d+)\s*TB\b', core)
+        m_gb = re.search(r'\b(\d+)\s*GB\b', core)
+        if m_tb:
+            storage_label = f"{m_tb.group(1)} TB"; storage_gb = int(m_tb.group(1)) * 1000
+        elif m_gb:
+            storage_label = f"{m_gb.group(1)} GB"; storage_gb = int(m_gb.group(1))
+        else:
+            # formato tipo "* 16 128 USD 740"
+            m_marco = re.search(r'(^|\s)(\d{2}[A-Z]?)\s+(\d{2,4})\s+USD', core)
+            if m_marco:
+                storage_gb = int(m_marco.group(3)); storage_label = f"{storage_gb} GB"
+
+        # generación (13/14/15/16/16E)
+        core2 = core.replace('IPHONE ', '')
+        m_gen = re.search(r'\b(16E|13|14|15|16)\b', core2)
+        gen = m_gen.group(1) if m_gen else None
+
+        # variante
+        variant = ''
+        if re.search(r'PRO\s+MAX', core2):
+            variant = 'PRO MAX'
+        elif re.search(r'\bPRO\b', core2):
+            variant = 'PRO'
+        elif re.search(r'\bPLUS\b', core2):
+            variant = 'PLUS'
+
+        # intentos extra
+        if not gen or not storage_label:
+            m_gen2 = re.search(r'^\*?\s*(\d{2}[A-Z]?)\b', core2)
+            if not gen and m_gen2:
+                gen = m_gen2.group(1)
+        if not gen or not storage_label:
+            # no tengo datos suficientes
+            continue
+
+        # claves
+        key = f"IPHONE {gen} {variant}".strip()
+        key_full = f"{key} {storage_label}"
+
+        rows.append({
+            "vendor": vendor,
+            "line": line,
+            "gen": gen,
+            "variant": variant,
+            "storage_gb": storage_gb,
+            "storage": storage_label,
+            "sim": sim,
+            "price_usd": price,
+            "key": key_full,
+            "key_with_sim": f"{key_full} {sim or ''}".strip()
+        })
+    return pd.DataFrame(rows)
+
 def init_db():
     with get_conn() as con:
         cur = con.cursor()
@@ -1169,8 +1257,8 @@ with st.sidebar:
 # =========================
 is_admin_user = is_admin()
 if is_admin_user:
-    tab_crear, tab_listar, tab_inversores, tab_vendedores, tab_reportes, tab_admin, tab_cal = st.tabs(
-        ["➕ Nueva venta", "📋 Listado & gestión", "🏦 Inversores", "🧑‍💼 Vendedores", "📊 Reportes KPI", "⚙️ Administración", "📅 Calendario"]
+    tab_crear, tab_listar, tab_inversores, tab_vendedores, tab_reportes, tab_admin, tab_cal, tab_stock = st.tabs(
+        ["➕ Nueva venta", "📋 Listado & gestión", "🏦 Inversores", "🧑‍💼 Vendedores", "📊 Reportes KPI", "⚙️ Administración", "📅 Calendario", "📦 Stock"]
     )
 else:
     tab_listar, tab_cal = st.tabs(
@@ -2576,6 +2664,136 @@ if is_admin_user:
                                 st.warning(f"No se pudo subir el backup: {e}")
                             st.success(f"Venta #{op['id']} eliminada ✅")
                             st.rerun()
+if is_admin_user:
+    with tab_stock:
+        with st.expander("📇 Gestión de proveedores (opcional)"):
+            # Inicializar y mostrar proveedores registrados
+            def _init_providers_db():
+                con = sqlite3.connect("providers.db")
+                cur = con.cursor()
+                cur.execute("CREATE TABLE IF NOT EXISTS providers (name TEXT PRIMARY KEY)")
+                con.commit()
+                cur.execute("INSERT OR IGNORE INTO providers(name) VALUES (?)", ("Belgrano",))
+                cur.execute("INSERT OR IGNORE INTO providers(name) VALUES (?)", ("Marco Carola",))
+                con.commit()
+                con.close()
+
+            def _get_providers():
+                with sqlite3.connect("providers.db") as con:
+                    return [r[0] for r in con.execute("SELECT name FROM providers ORDER BY name")] 
+
+            def _add_provider(name: str):
+                name = (name or "").strip()
+                if not name:
+                    return False
+                with sqlite3.connect("providers.db") as con:
+                    cur = con.cursor()
+                    cur.execute("INSERT OR IGNORE INTO providers(name) VALUES (?)", (name,))
+                    con.commit()
+                return True
+
+            _init_providers_db()
+            st.caption("Proveedores registrados: " + (", ".join(_get_providers()) or "ninguno"))
+            new_name = st.text_input("Agregar proveedor", key="prov_add")
+            if st.button("Agregar", key="prov_add_btn"):
+                if _add_provider(new_name):
+                    st.success(f"Agregado: {new_name}")
+                else:
+                    st.warning("Ingresá un nombre válido.")
+            st.caption("Por ahora el procesamiento usa fijos: Belgrano y Marco Carola.")
+
+        with st.form("pegar_whatsapp"):
+            c1, c2 = st.columns(2)
+            with c1:
+                st.markdown("**Proveedor 1:** Belgrano")
+                vendor1 = "Belgrano"
+                text1 = st.text_area("Texto proveedor 1 (pegá desde WhatsApp)", height=260)
+            with c2:
+                st.markdown("**Proveedor 2:** Marco Carola")
+                vendor2 = "Marco Carola"
+                text2 = st.text_area("Texto proveedor 2 (pegá desde WhatsApp)", height=260)
+            submitted = st.form_submit_button("Procesar")
+
+        if submitted:
+            inputs = []
+            if text1.strip():
+                inputs.append((vendor1.strip() or "Proveedor 1", text1))
+            if text2.strip():
+                inputs.append((vendor2.strip() or "Proveedor 2", text2))
+
+            if len(inputs) == 0:
+                st.warning("Pegá el texto de al menos un proveedor.")
+                st.stop()
+
+            dfs = []
+            for vendor, text in inputs:
+                df = parse_lines(vendor, text)
+                dfs.append(df)
+
+            raw = pd.concat(dfs, ignore_index=True)
+            st.success(f"Se parsearon **{len(raw)}** líneas válidas de **{len(inputs)}** proveedor(es).")
+
+            if show_full:
+                st.dataframe(raw, use_container_width=True)
+
+            # agrupar por mejor precio
+            group_key = "key" if group_esim_sim else "key_with_sim"
+            best = raw.sort_values("price_usd").groupby(group_key, as_index=False).first()
+            best = best.rename(columns={"vendor": "best_vendor", "sim": "sim_from_best"})
+            cov = raw.groupby(group_key)["vendor"].nunique().reset_index().rename(columns={"vendor": "num_vendors"})
+            out = best.merge(cov, on=group_key, how="left")
+
+            # ordenar y construir "Modelo" sin columna Variante aparte
+            order_cols = ["gen","variant","storage"]
+            out = out.sort_values(order_cols).reset_index(drop=True)
+            out["model"] = ("Iphone " + out["gen"] + " " + out["variant"] + " " + out["storage"]).str.replace("  ", " ").str.replace("  ", " ").str.strip()
+            out["sale_price_usd"] = out["price_usd"] + float(margin_usd)
+
+            show = out[["model","price_usd","sale_price_usd","best_vendor","sim_from_best"]].rename(columns={
+                "model":"Modelo",
+                "price_usd":"Mejor precio (USD)",
+                "sale_price_usd":"Valor Venta (USD)",
+                "best_vendor":"Proveedor",
+                "sim_from_best":"SIM/eSIM"
+            })
+
+            st.subheader("🏆 Mejor precio por modelo")
+            st.dataframe(show, use_container_width=True)
+
+            # Botón para generar lista WhatsApp
+            # Lista para WhatsApp (persistente, con botón de copiar que NO re-ejecuta el script)
+            lines = [f"▪️{r['Modelo']} - $ {int(round(r['Valor Venta (USD)']))}" for _, r in show.iterrows()]
+            msg = "\n".join(lines)
+            st.session_state['whatsapp_msg'] = msg
+
+            st.subheader("📋 Lista WhatsApp")
+            components.html(f"""
+        <div style='display:flex;gap:8px;align-items:center;margin-bottom:8px;'>
+        <button id='copyBtn'>Copiar Lista Whatsapp</button>
+        </div>
+        <textarea id='wa' rows='12' style='width:100%;'>{msg}</textarea>
+        <script>
+        const btn = document.getElementById('copyBtn');
+        btn.addEventListener('click', async () => {{
+        const ta = document.getElementById('wa');
+        ta.select();
+        try {{ await navigator.clipboard.writeText(ta.value); }} catch(e) {{ document.execCommand('copy'); }}
+        }});
+        </script>
+        """, height=260)
+
+            # descargar CSV (sin columna Variante)
+            csv = show.to_csv(index=False).encode("utf-8")
+            st.download_button(
+                "⬇️ Descargar CSV unificado",
+                data=csv,
+                file_name="iphone_stock_best.csv",
+                mime="text/csv"
+            )
+
+            st.caption(f"Modelos únicos: {show.shape[0]} • Proveedores procesados: {len(inputs)}")
+        else:
+            st.info("Pegá el texto de uno o dos proveedores y presioná **Procesar**.")
 
 with tab_cal:
     # --------- 📅 CALENDARIO DE COBROS ---------

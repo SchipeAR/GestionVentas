@@ -14,6 +14,7 @@ import json
 import urllib.parse
 import time
 import unicodedata
+import re
 
 
 st.set_page_config(layout="wide")

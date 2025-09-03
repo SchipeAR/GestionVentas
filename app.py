@@ -19,6 +19,10 @@ import io
 import streamlit.components.v1 as components
 from urllib.parse import urlparse
 
+GH_REPO        = st.secrets["GH_REPO"]                         # ej: "tuusuario/tu-repo"
+GH_BRANCH      = st.secrets.get("GH_BRANCH", "main")
+GH_PUBLIC_PATH = st.secrets.get("GH_PUBLIC_PATH", "public/latest_stock.csv")
+GH_TOKEN       = st.secrets["GH_TOKEN"]
 
 st.set_page_config(layout="wide")
 group_esim_sim = st.session_state.get("group_esim_sim", True)
@@ -83,7 +87,7 @@ def publish_public_view(show_df: pd.DataFrame):
 
 # === VISTA PÚBLICA =====================================================
 public = qp_get("public", "0")
-if str(params.get("public", ["0"])[0]) == "1":
+if str(public) == "1":
     st.title("🟢 Stock iPhone — Vista pública")
 
     # Descargar el CSV público desde el repo (vía GitHub API Contents)
@@ -585,7 +589,7 @@ def exportar_a_sheets_webapp_desde_sqlite(db_path: str):
 # =========================
 # DB Helpers & Migrations
 # =========================
-def publish_public_view(show_df: pd.DataFrame):
+def publish_public_view_sqlite(show_df: pd.DataFrame):
     # Guarda solo las 2 columnas visibles públicamente
     df_public = show_df[["Modelo", "Valor Venta (USD)"]].copy()
     with sqlite3.connect(DB_PATH) as con:
@@ -2901,7 +2905,7 @@ if is_admin_user:
             st.subheader("🏆 Mejor precio por modelo")
             st.dataframe(show, use_container_width=True)
             publish_public_view(show)
-            publish_public_view(show)
+            
             st.caption("📣 Vista pública actualizada. Compartí tu URL con ?public=1")
 
             # Botón para generar lista WhatsApp

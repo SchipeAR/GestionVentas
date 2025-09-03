@@ -16,6 +16,8 @@ import time
 import unicodedata
 import re
 import io
+import streamlit.components.v1 as components
+from urllib.parse import urlparse
 
 
 st.set_page_config(layout="wide")

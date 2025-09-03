@@ -25,6 +25,23 @@ group_esim_sim = st.session_state.get("group_esim_sim", True)
 show_full      = st.session_state.get("show_full", False)
 margin_usd     = st.session_state.get("margin_usd", 30.0)
 
+def qp_get(key, default=None):
+    """Lee ?key=... desde st.query_params y devuelve str (o default)."""
+    val = st.query_params.get(key, default)
+    # según versión puede venir list o str; normalizamos a str
+    if isinstance(val, list):
+        return val[0] if val else default
+    return val
+
+def qp_set(**kwargs):
+    """Setea varios query params de una."""
+    # convertimos todo a str por prolijidad
+    st.query_params.update({k: "" if v is None else str(v) for k, v in kwargs.items()})
+
+def qp_clear():
+    """Borra todos los query params."""
+    st.query_params.clear()
+
 def _pub_cfg():
     url = f"https://api.github.com/repos/{GH_REPO}/contents/{GH_PUBLIC_PATH}"
     return url
@@ -65,7 +82,7 @@ def publish_public_view(show_df: pd.DataFrame):
         raise RuntimeError(f"GitHub PUT falló: {r.status_code} {r.text[:200]}")
 
 # === VISTA PÚBLICA =====================================================
-params = st.experimental_get_query_params()
+public = qp_get("public", "0")
 if str(params.get("public", ["0"])[0]) == "1":
     st.title("🟢 Stock iPhone — Vista pública")
 
@@ -1673,7 +1690,7 @@ with tab_listar:
             if key_prefix == "uno":
                 df_ops = df_ops[df_ops["Tipo"] != "COMPRA"].reset_index(drop=True)
             editor_key = f"{key_prefix}_listado_editor"
-            sel_param = st.query_params.get("selid")
+            sel_param = qp_get("selid")
             if isinstance(sel_param, list):
                 sel_param = sel_param[0] if sel_param else None
             try:

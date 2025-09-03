@@ -25,36 +25,71 @@ group_esim_sim = st.session_state.get("group_esim_sim", True)
 show_full      = st.session_state.get("show_full", False)
 margin_usd     = st.session_state.get("margin_usd", 30.0)
 
-# === VISTA PÚBLICA (solo Modelo + Valor Venta) =========================
-# Uso: https://TU-URL-STREAMLIT/?public=1
-params = st.query_params
-pub = params.get("public")
-if isinstance(pub, list):
-    pub = pub[0] if pub else None
+def _pub_cfg():
+    url = f"https://api.github.com/repos/{GH_REPO}/contents/{GH_PUBLIC_PATH}"
+    return url
 
-if str(pub or "0") == "1":
+def _pub_headers():
+    return {
+        "Authorization": f"token {GH_TOKEN}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+
+def _pub_get_sha():
+    url = _pub_cfg()
+    r = requests.get(url, headers=_pub_headers(), params={"ref": GH_BRANCH}, timeout=30)
+    if r.status_code == 200:
+        return r.json().get("sha")
+    if r.status_code == 404:
+        return None
+    raise RuntimeError(f"GitHub GET falló: {r.status_code} {r.text[:200]}")
+
+def publish_public_view(show_df: pd.DataFrame):
+    # Solo columnas públicas
+    df_public = show_df[["Modelo", "Valor Venta (USD)"]].copy()
+    csv_bytes = df_public.to_csv(index=False).encode("utf-8")
+
+    url = _pub_cfg()
+    sha = _pub_get_sha()
+    payload = {
+        "message": f"publish latest_stock {time.strftime('%Y-%m-%d %H:%M')}",
+        "content": base64.b64encode(csv_bytes).decode("ascii"),
+        "branch": GH_BRANCH,
+    }
+    if sha:
+        payload["sha"] = sha
+
+    r = requests.put(url, headers=_pub_headers(), json=payload, timeout=30)
+    if r.status_code not in (200, 201):
+        raise RuntimeError(f"GitHub PUT falló: {r.status_code} {r.text[:200]}")
+
+# === VISTA PÚBLICA =====================================================
+params = st.experimental_get_query_params()
+if str(params.get("public", ["0"])[0]) == "1":
     st.title("🟢 Stock iPhone — Vista pública")
 
-    try:
-        with sqlite3.connect(DB_PATH) as con:
-            dfpub = pd.read_sql(
-                'SELECT "Modelo", "Valor Venta (USD)" FROM latest_stock',
-                con
-            )
-        # Tabla (solo 2 columnas)
-        st.dataframe(dfpub, use_container_width=True)
+    # Descargar el CSV público desde el repo (vía GitHub API Contents)
+    url = _pub_cfg()
+    r = requests.get(url, headers=_pub_headers(), params={"ref": GH_BRANCH}, timeout=30)
+    if r.status_code == 404:
+        st.warning("Aún no hay stock publicado. Procesá en la vista de admin para publicarlo.")
+        st.stop()
+    r.raise_for_status()
+    content_b64 = r.json().get("content", "")
+    csv_bytes = base64.b64decode(content_b64)
+    dfpub = pd.read_csv(io.BytesIO(csv_bytes))
 
-        # Texto WhatsApp (no reinicia la app)
-        price_col = "Valor Venta (USD)"
-        lines = [f"▪️{r['Modelo']} - $ {int(round(float(r[price_col])))}"
-                 for _, r in dfpub.iterrows()]
-        msg = "\n".join(lines)
+    # Mostrar tabla (solo 2 columnas)
+    st.dataframe(dfpub, use_container_width=True)
 
-        import streamlit.components.v1 as components
-        import io
-        from io import BytesIO
+    # Generar texto WhatsApp
+    lines = [f"▪️{r['Modelo']} - $ {int(round(float(r['Valor Venta (USD)'])))}"
+             for _, r in dfpub.iterrows()]
+    msg = "\n".join(lines)
 
-        components.html(f"""
+    import streamlit.components.v1 as components
+    components.html(f"""
 <div style='display:flex;gap:8px;align-items:center;margin:10px 0 8px;'>
   <button id='copyBtn'>Copiar Lista Whatsapp</button>
 </div>
@@ -67,52 +102,23 @@ btn.addEventListener('click', async () => {{
   try {{ await navigator.clipboard.writeText(ta.value); }} catch(e) {{ document.execCommand('copy'); }}
 }});
 </script>
-        """, height=260)
+    """, height=260)
 
-        # Descargar Excel (solo 2 columnas), bien formateado
-        buf = BytesIO()
-        with pd.ExcelWriter(buf, engine="openpyxl") as writer:
-            dfpub.to_excel(writer, index=False, sheet_name="Lista")
-            ws = writer.sheets["Lista"]
-
-            # Ajuste de columnas + estilos
-            from openpyxl.utils import get_column_letter
-            from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
-
-            for idx, col in enumerate(dfpub.columns, start=1):
-                maxlen = max(len(str(col)), *[len(str(x)) for x in dfpub[col].astype(str).values])
-                ws.column_dimensions[get_column_letter(idx)].width = min(maxlen + 4, 60)
-
-            header_font = Font(bold=True, color="FFFFFF")
-            header_fill = PatternFill("solid", fgColor="4F81BD")
-            thin = Side(style="thin", color="D9D9D9")
-            border = Border(top=thin, bottom=thin, left=thin, right=thin)
-            for cell in ws[1]:
-                cell.font = header_font
-                cell.fill = header_fill
-                cell.alignment = Alignment(horizontal="center", vertical="center")
-                cell.border = border
-
-            # Formato moneda en la 2da columna
-            for row in ws.iter_rows(min_row=2, min_col=2, max_col=2, max_row=ws.max_row):
-                for cell in row:
-                    cell.number_format = '"$"#,##0'
-                    cell.alignment = Alignment(horizontal="right")
-
-            ws.freeze_panes = "A2"
-            ws.auto_filter.ref = ws.dimensions
-
-        buf.seek(0)
-        st.download_button(
-            "⬇️ Descargar Excel (Vista pública)",
-            data=buf.getvalue(),
-            file_name="lista_whatsapp_publica.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        )
-
-    except Exception:
-        st.warning("Aún no hay stock publicado. Procesá en la vista de admin para publicarlo.")
+    # Descargar Excel (opcional; sigue siendo solo 2 columnas)
+    from io import BytesIO
+    buf = BytesIO()
+    with pd.ExcelWriter(buf, engine="openpyxl") as writer:
+        dfpub.to_excel(writer, index=False, sheet_name="Lista")
+    buf.seek(0)
+    st.download_button(
+        "⬇️ Descargar Excel (Vista pública)",
+        data=buf.getvalue(),
+        file_name="lista_whatsapp_publica.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
     st.stop()
+# =======================================================================
+
 # =======================================================================
 
 
@@ -2877,6 +2883,7 @@ if is_admin_user:
 
             st.subheader("🏆 Mejor precio por modelo")
             st.dataframe(show, use_container_width=True)
+            publish_public_view(show)
             publish_public_view(show)
             st.caption("📣 Vista pública actualizada. Compartí tu URL con ?public=1")
 

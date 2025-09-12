@@ -970,21 +970,34 @@ def upsert_operation(op):
     with get_conn() as con:
         cur = con.cursor()
         if op.get("id"):
-            q = """UPDATE operations
-                   SET tipo=?, descripcion=?, cliente=?, zona=?, nombre=?, proveedor=?, L=?, N=?, O=?, estado=?, y_pagado=?, comision=?, sale_date=?, purchase_price=?
-                   WHERE id=?"""
-            cur.execute(q, (op["tipo"], op.get("descripcion"), op.get("cliente"), op.get("zona"), op["nombre"],
-                            op.get("proveedor"), op.get("L"), op.get("N"), op.get("O"), op.get("estado"),
-                            op.get("y_pagado"), op.get("comision"), op.get("sale_date"),
-                            op.get("purchase_price"), op["id"]))
+            q = """
+                UPDATE operations
+                SET tipo=?, descripcion=?, cliente=?, zona=?, nombre=?, proveedor=?, revendedor=?,
+                    L=?, N=?, O=?, estado=?, y_pagado=?, comision=?, sale_date=?, purchase_price=?
+                WHERE id=?
+            """
+            cur.execute(q, (
+                op["tipo"], op.get("descripcion"), op.get("cliente"), op.get("zona"), op["nombre"],
+                op.get("proveedor"), op.get("revendedor"),            # <<<<<<<<<<<<<< agregado
+                op.get("L"), op.get("N"), op.get("O"), op.get("estado"),
+                op.get("y_pagado"), op.get("comision"), op.get("sale_date"),
+                op.get("purchase_price"), op["id"]
+            ))
             return op["id"]
         else:
-            q = """INSERT INTO operations (tipo, descripcion, cliente, zona, nombre, proveedor, L, N, O, estado, y_pagado, comision, sale_date, purchase_price)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
-            cur.execute(q, (op["tipo"], op.get("descripcion"), op.get("cliente"), op.get("zona"), op["nombre"],
-                            op.get("proveedor"), op.get("L"), op.get("N"), op.get("O"), op.get("estado"),
-                            op.get("y_pagado"), op.get("comision"), op.get("sale_date"),
-                            op.get("purchase_price")))
+            q = """
+                INSERT INTO operations (
+                    tipo, descripcion, cliente, zona, nombre, proveedor, revendedor,
+                    L, N, O, estado, y_pagado, comision, sale_date, purchase_price
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            """
+            cur.execute(q, (
+                op["tipo"], op.get("descripcion"), op.get("cliente"), op.get("zona"), op["nombre"],
+                op.get("proveedor"), op.get("revendedor"),            # <<<<<<<<<<<<<< agregado
+                op.get("L"), op.get("N"), op.get("O"), op.get("estado"),
+                op.get("y_pagado"), op.get("comision"), op.get("sale_date"),
+                op.get("purchase_price")
+            ))
             return cur.lastrowid
 
 def delete_operation(operation_id: int):

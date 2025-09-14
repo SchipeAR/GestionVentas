@@ -1473,6 +1473,49 @@ if is_admin_user:
             st.info(f"Sin datos para {mes:02d}/{anio}.")
             st.stop()
 
+        # --- Helper: ganancia de la operación reconocida en el mes de la venta ---
+        def _ganancia_op_mes(r):
+            """
+            Regla:
+            - Si cuotas == 1: inversor 0%. 
+                Toto vendedor: venta - costo
+                Otros vendedores: venta - costo - comisión
+            - Si cuotas >= 2:
+                Toto vendedor: venta - purchase_price
+                Otros vendedores: venta - purchase_price - comisión
+            """
+            cuotas   = int(r["cuotas"] or 0)
+            vendedor = (r["vendedor"] or "").strip().upper()
+            venta    = float(r["venta"] or 0.0)
+            compra   = float(r["compra"] or 0.0)  # purchase_price
+            costo    = float(r["costo"] or 0.0)
+            comision = float(r["comision"] or 0.0)
+
+            if cuotas == 1:
+                return (venta - costo) if (vendedor == TOTO_VENDOR_NAME.upper()) else (venta - costo - comision)
+            else:
+                return (venta - compra) if (vendedor == TOTO_VENDOR_NAME.upper()) else (venta - compra - comision)
+
+        # --- 1) 18% de TOTO inversor del mes (ya lo tenías como g1_total) ---
+        # df_toto_inv_m = df_m[df_m["inversor"].str.upper() == TOTO_INV_NAME.upper()].copy()
+        # df_toto_inv_m["gan_inv_18"] = df_toto_inv_m["costo"] * TOTO_INV_PCT
+        # g1_total = float(df_toto_inv_m["gan_inv_18"].sum()) if not df_toto_inv_m.empty else 0.0
+
+        # --- 5) Ganancia TOTAL del mes (todas las ventas de todos los vendedores, reconociendo 100% en el mes de venta) + 18% TOTO inversor ---
+        df_m = df_m.copy()
+        df_m["gan_total_oper"] = df_m.apply(_ganancia_op_mes, axis=1)
+        g5_total = float(df_m["gan_total_oper"].sum()) + float(g1_total)
+
+        # --- EXTRA: Ganancia mensual de ventas NO hechas por Toto vendedor ---
+        df_no_toto_vend = df_m[df_m["vendedor"].str.upper() != TOTO_VENDOR_NAME.upper()].copy()
+        df_no_toto_vend["gan_no_toto"] = df_no_toto_vend.apply(
+            lambda r: (r["venta"] - r["costo"] - r["comision"]) if int(r["cuotas"] or 0) == 1 
+                    else (r["venta"] - r["compra"] - r["comision"]),
+            axis=1
+        )
+        g_extra_no_toto_vend = float(df_no_toto_vend["gan_no_toto"].sum()) if not df_no_toto_vend.empty else 0.0
+
+
         # -------- 1) TOTO inversor (18%) en el mes ----------
         df_toto_inv_m = df_m[df_m["inversor"].str.upper() == TOTO_INV_NAME.upper()].copy()
         df_toto_inv_m["gan_inv_18"] = df_toto_inv_m["costo"] * TOTO_INV_PCT

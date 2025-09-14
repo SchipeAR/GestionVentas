@@ -1504,7 +1504,13 @@ if is_admin_user:
         # --- 5) Ganancia TOTAL del mes (todas las ventas de todos los vendedores, reconociendo 100% en el mes de venta) + 18% TOTO inversor ---
         df_m = df_m.copy()
         df_m["gan_total_oper"] = df_m.apply(_ganancia_op_mes, axis=1)
-        g5_total = float(df_m["gan_total_oper"].sum()) + float(g1_total)
+        df_toto_inv_m = df_m[df_m["inversor"].str.upper() == TOTO_INV_NAME.upper()].copy()
+        if not df_toto_inv_m.empty:
+            df_toto_inv_m["gan_inv_18"] = df_toto_inv_m["costo"].astype(float) * float(TOTO_INV_PCT)
+            g1_total = float(df_toto_inv_m["gan_inv_18"].sum())
+        else:
+            g1_total = 0.0
+        g5_total = float(df_m["gan_total_oper"].sum()) + g1_total
 
         # --- EXTRA: Ganancia mensual de ventas NO hechas por Toto vendedor ---
         df_no_toto_vend = df_m[df_m["vendedor"].str.upper() != TOTO_VENDOR_NAME.upper()].copy()

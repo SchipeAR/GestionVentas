@@ -1463,7 +1463,7 @@ if is_admin_user:
 
         # -------- Filtro por mes seleccionado ----------
         m0 = date(int(anio), int(mes), 1)
-        df_m = df[(df["mes"].dt.year == anio) & (df["mes"].dt.month == mes)].copy()
+        df_m = df[(df["mes"].dt.year == int(anio)) & (df["mes"].dt.month == int(mes))].copy()
 
         # -------- 1) TOTO inversor (18%) en el mes ----------
         df_toto_inv_m = df_m[df_m["inversor"].str.upper() == TOTO_INV_NAME.upper()].copy()
@@ -3851,3 +3851,4 @@ def backup_zip_bytes():
     mem.seek(0)
     return mem.getvalue()
 # ========= /BACKUP A GITHUB =========
+

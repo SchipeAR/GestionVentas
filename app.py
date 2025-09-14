@@ -1512,7 +1512,7 @@ if is_admin_user:
         c4.metric("4) Total TOTO (1+2+3)", fmt_money_up(g4_total))
         c5.metric("5) Ganancia TOTAL (negocio + 18% TOTO inversor)", fmt_money_up(g5_total))
 
-        st.metric("Ganancia mensual de ventas NO hechas por Toto vendedor", fmt_money_up(g_extra_no_toto_vend))
+        st.metric("Vendedores", fmt_money_up(g_extra_no_toto_vend))
 
         st.divider()
 

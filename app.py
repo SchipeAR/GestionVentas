@@ -1445,7 +1445,7 @@ if is_admin_user:
             dt = parse_iso_or_today(op.get("sale_date") or op.get("created_at"))
             rows.append({
                 "id": int(op["id"]),
-                "mes": dt.replace(day=1),
+                "mes": datetime(dt.year, dt.month, 1),   # ← en vez de dt.replace(day=1)
                 "venta": float(op.get("N") or 0.0),
                 "costo": float(op.get("L") or 0.0),
                 "compra": float(op.get("purchase_price") or 0.0),
@@ -1453,17 +1453,25 @@ if is_admin_user:
                 "cuotas": int(op.get("O") or 0),
                 "inversor": (op.get("nombre") or "").strip(),
                 "vendedor": (op.get("zona") or "").strip(),
-            })
+            })      
         df = pd.DataFrame(rows) if rows else pd.DataFrame(columns=[
             "id","mes","venta","costo","compra","comision","cuotas","inversor","vendedor"
         ])
         if df.empty:
             st.info("No hay datos todavía.")
             st.stop()
+        if "mes" not in df.columns:
+            st.warning("No se encontró la columna 'mes' en el dataframe.")
+            st.stop()
 
+        df["mes"] = pd.to_datetime(df["mes"], errors="coerce", utc=False)
+        df = df.dropna(subset=["mes"])  # saca filas con 'mes' inválido
         # -------- Filtro por mes seleccionado ----------
         m0 = date(int(anio), int(mes), 1)
         df_m = df[(df["mes"].dt.year == int(anio)) & (df["mes"].dt.month == int(mes))].copy()
+        if df_m.empty:
+            st.info(f"Sin datos para {mes:02d}/{anio}.")
+            st.stop()
 
         # -------- 1) TOTO inversor (18%) en el mes ----------
         df_toto_inv_m = df_m[df_m["inversor"].str.upper() == TOTO_INV_NAME.upper()].copy()
@@ -3851,4 +3859,3 @@ def backup_zip_bytes():
     mem.seek(0)
     return mem.getvalue()
 # ========= /BACKUP A GITHUB =========
-

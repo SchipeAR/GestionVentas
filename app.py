@@ -1417,118 +1417,126 @@ else:
 if is_admin_user:
     # === CREAR VENTA (con formulario que se limpia y select de vendedores) ===
     with tab_toto:
-        st.subheader("🟡 Panel de TOTO")
+        st.subheader("🟡 Panel de TOTO — por mes")
 
-        # Opcional: querés restar comisión en “Toto vendedor (cuotas)”?
-        restar_comision_cuotas = st.toggle(
-            "Restar comisión en el cálculo de 'Toto vendedor (cuotas)'",
-            value=False,
-            help="Si está desactivado: venta - costo. Si está activado: venta - costo - comisión."
-        )
+        from datetime import date, datetime
+        import pandas as pd
+        import altair as alt
 
-        # Traemos todas las operaciones
+        # -------- Controles de mes ----------
+        hoy = date.today()
+        c1, c2, c3 = st.columns([1,1,2])
+        with c1:
+            anio = st.number_input("Año", min_value=2000, max_value=2100, value=hoy.year, step=1, key="toto_year")
+        with c2:
+            mes = st.number_input("Mes", min_value=1, max_value=12, value=hoy.month, step=1, key="toto_month")
+        with c3:
+            restar_comision_cuotas = st.toggle(
+                "Restar comisión en 'Toto vendedor (2+ cuotas)'",
+                value=False,
+                help="Si activás: (venta - costo - comisión). Si no: (venta - costo).",
+                key="toto_toggle_comi"
+            )
+
+        # -------- Datos base ----------
         ops = list_operations(user_scope_filters({})) or []
-
-        # Armamos filas básicas
         rows = []
         for op in ops:
             dt = parse_iso_or_today(op.get("sale_date") or op.get("created_at"))
             rows.append({
                 "id": int(op["id"]),
                 "mes": dt.replace(day=1),
-                "cuotas": int(op.get("O") or 0),
                 "venta": float(op.get("N") or 0.0),
                 "costo": float(op.get("L") or 0.0),
                 "compra": float(op.get("purchase_price") or 0.0),
                 "comision": float(op.get("comision") or 0.0),
+                "cuotas": int(op.get("O") or 0),
                 "inversor": (op.get("nombre") or "").strip(),
                 "vendedor": (op.get("zona") or "").strip(),
             })
-        import pandas as pd
         df = pd.DataFrame(rows) if rows else pd.DataFrame(columns=[
-            "id","mes","cuotas","venta","costo","compra","comision","inversor","vendedor"
+            "id","mes","venta","costo","compra","comision","cuotas","inversor","vendedor"
         ])
         if df.empty:
             st.info("No hay datos todavía.")
             st.stop()
 
-        # --- 1) TOTO inversor: suma de sus 18% (aprox costo * 18%)
-        df_toto_inv = df[df["inversor"].str.upper() == TOTO_INV_NAME.upper()].copy()
-        df_toto_inv["gan_inv_18"] = df_toto_inv["costo"] * TOTO_INV_PCT
-        g1_mes = df_toto_inv.groupby("mes", as_index=False)["gan_inv_18"].sum()
-        g1_total = float(g1_mes["gan_inv_18"].sum()) if not g1_mes.empty else 0.0
+        # -------- Filtro por mes seleccionado ----------
+        m0 = date(int(anio), int(mes), 1)
+        df_m = df[(df["mes"].dt.year == anio) & (df["mes"].dt.month == mes)].copy()
 
-        # --- 2) TOTO vendedor (cuotas 2+): ganancias SIN el 18% (venta - costo [ - comisión opcional ])
-        df_toto_vend_cuotas = df[(df["vendedor"].str.upper() == TOTO_VENDOR_NAME.upper()) & (df["cuotas"] >= 2)].copy()
+        # -------- 1) TOTO inversor (18%) en el mes ----------
+        df_toto_inv_m = df_m[df_m["inversor"].str.upper() == TOTO_INV_NAME.upper()].copy()
+        df_toto_inv_m["gan_inv_18"] = df_toto_inv_m["costo"] * TOTO_INV_PCT
+        g1_total = float(df_toto_inv_m["gan_inv_18"].sum()) if not df_toto_inv_m.empty else 0.0
+
+        # -------- 2) TOTO vendedor (2+ cuotas) en el mes ----------
+        df_toto_vend_cuotas_m = df_m[(df_m["vendedor"].str.upper() == TOTO_VENDOR_NAME.upper()) & (df_m["cuotas"] >= 2)].copy()
         if restar_comision_cuotas:
-            df_toto_vend_cuotas["gan_vend_cuotas"] = df_toto_vend_cuotas["venta"] - df_toto_vend_cuotas["costo"] - df_toto_vend_cuotas["comision"]
+            df_toto_vend_cuotas_m["gan_vend_cuotas"] = df_toto_vend_cuotas_m["venta"] - df_toto_vend_cuotas_m["costo"] - df_toto_vend_cuotas_m["comision"]
         else:
-            df_toto_vend_cuotas["gan_vend_cuotas"] = df_toto_vend_cuotas["venta"] - df_toto_vend_cuotas["costo"]
-        g2_mes = df_toto_vend_cuotas.groupby("mes", as_index=False)["gan_vend_cuotas"].sum()
-        g2_total = float(g2_mes["gan_vend_cuotas"].sum()) if not g2_mes.empty else 0.0
+            df_toto_vend_cuotas_m["gan_vend_cuotas"] = df_toto_vend_cuotas_m["venta"] - df_toto_vend_cuotas_m["costo"]
+        g2_total = float(df_toto_vend_cuotas_m["gan_vend_cuotas"].sum()) if not df_toto_vend_cuotas_m.empty else 0.0
 
-        # --- 3) TOTO vendedor en 1 pago: (venta - costo)  (sin 18% ni comisión)
-        df_toto_un_pago = df[(df["vendedor"].str.upper() == TOTO_VENDOR_NAME.upper()) & (df["cuotas"] == 1)].copy()
-        df_toto_un_pago["gan_vend_1p"] = df_toto_un_pago["venta"] - df_toto_un_pago["costo"]
-        g3_mes = df_toto_un_pago.groupby("mes", as_index=False)["gan_vend_1p"].sum()
-        g3_total = float(g3_mes["gan_vend_1p"].sum()) if not g3_mes.empty else 0.0
+        # -------- 3) TOTO vendedor (1 pago) en el mes ----------
+        df_toto_un_pago_m = df_m[(df_m["vendedor"].str.upper() == TOTO_VENDOR_NAME.upper()) & (df_m["cuotas"] == 1)].copy()
+        df_toto_un_pago_m["gan_vend_1p"] = df_toto_un_pago_m["venta"] - df_toto_un_pago_m["costo"]
+        g3_total = float(df_toto_un_pago_m["gan_vend_1p"].sum()) if not df_toto_un_pago_m.empty else 0.0
 
-        # --- 4) Total TOTO (1 + 2 + 3)
-        # (suma mensual y suma total)
-        g4_mes = (
-            g1_mes.set_index("mes")
-            .join(g2_mes.set_index("mes"), how="outer")
-            .join(g3_mes.set_index("mes"), how="outer")
-            .fillna(0.0)
-            .reset_index()
-        )
-        g4_mes["total_toto"] = g4_mes.get("gan_inv_18", 0.0) + g4_mes.get("gan_vend_cuotas", 0.0) + g4_mes.get("gan_vend_1p", 0.0)
-        g4_total = float(g4_mes["total_toto"].sum()) if not g4_mes.empty else 0.0
+        # -------- 4) Total TOTO (1+2+3) ----------
+        g4_total = g1_total + g2_total + g3_total
 
-        # --- 5) Ganancia TOTAL (todas las ganancias del negocio + 18% de TOTO inversor)
-        # Para "todas las ganancias del negocio" usamos la métrica habitual:
-        #   negocio = venta - compra - comisión
-        df_all = df.copy()
-        df_all["gan_negocio"] = df_all["venta"] - df_all["compra"] - df_all["comision"]
-        g5_total = float(df_all["gan_negocio"].sum()) + g1_total
+        # -------- 5) Ganancia TOTAL del mes (negocio + 18% TOTO inversor) ----------
+        # Ganancia del negocio = venta - compra - comisión (de todas las operaciones del mes)
+        df_m["gan_negocio"] = df_m["venta"] - df_m["compra"] - df_m["comision"]
+        g5_total = float(df_m["gan_negocio"].sum()) + g1_total
 
-        # ====== KPIs arriba ======
+        # -------- EXTRA: Ganancia mensual de ventas NO hechas por Toto vendedor ----------
+        df_no_toto_vend = df_m[df_m["vendedor"].str.upper() != TOTO_VENDOR_NAME.upper()].copy()
+        g_extra_no_toto_vend = float((df_no_toto_vend["venta"] - df_no_toto_vend["compra"] - df_no_toto_vend["comision"]).sum()) if not df_no_toto_vend.empty else 0.0
+
+        # -------- KPIs ----------
         c1,c2,c3 = st.columns(3)
-        c1.metric("1) TOTO inversor (18%)", fmt_money_up(g1_total))
-        c2.metric("2) TOTO vendedor (cuotas 2+)", fmt_money_up(g2_total))
+        c1.metric(f"1) TOTO inversor (18%) — {m0:%m/%Y}", fmt_money_up(g1_total))
+        c2.metric("2) TOTO vendedor (2+ cuotas)", fmt_money_up(g2_total))
         c3.metric("3) TOTO vendedor (1 pago)", fmt_money_up(g3_total))
         c4,c5 = st.columns(2)
         c4.metric("4) Total TOTO (1+2+3)", fmt_money_up(g4_total))
         c5.metric("5) Ganancia TOTAL (negocio + 18% TOTO inversor)", fmt_money_up(g5_total))
 
+        st.metric("Ganancia mensual de ventas NO hechas por Toto vendedor", fmt_money_up(g_extra_no_toto_vend))
+
         st.divider()
 
-        # ====== Gráficos mensuales ======
-        import altair as alt
-        def _area(df, x, y, title):
-            if df.empty: return st.info(f"Sin datos para {title}")
-            ch = alt.Chart(df).mark_area(opacity=0.6).encode(
-                x=alt.X(x, title="Mes"),
-                y=alt.Y(y, title="Monto"),
-                tooltip=[x, y]
-            ).properties(height=220, title=title)
+        # -------- Mini gráficos del mes seleccionado ----------
+        comp = pd.DataFrame({
+            "Concepto": ["Inversor (18%)","Vendedor (2+)","Vendedor (1 pago)"],
+            "Monto": [g1_total, g2_total, g3_total]
+        })
+        if comp["Monto"].sum() > 0:
+            ch = alt.Chart(comp).mark_bar().encode(x="Concepto:N", y="Monto:Q", tooltip=["Concepto","Monto:Q"])
             st.altair_chart(ch, use_container_width=True)
+        else:
+            st.info("Sin datos en este mes para la composición de TOTO.")
 
-        c1,c2 = st.columns(2)
-        with c1: _area(g1_mes, "mes:T", "gan_inv_18:Q", "1) Inversor (18%) por mes")
-        with c2: _area(g2_mes, "mes:T", "gan_vend_cuotas:Q", "2) Vendedor (cuotas 2+) por mes")
-        c3,c4 = st.columns(2)
-        with c3: _area(g3_mes, "mes:T", "gan_vend_1p:Q", "3) Vendedor (1 pago) por mes")
-        with c4: _area(g4_mes[["mes","total_toto"]], "mes:T", "total_toto:Q", "4) Total TOTO por mes")
-
-        # Pie simple de la composición total (1/2/3)
-        if (g1_total + g2_total + g3_total) > 0:
-            comp = pd.DataFrame({
-                "Concepto": ["Inversor (18%)","Vendedor (2+)","Vendedor (1 pago)"],
-                "Monto": [g1_total, g2_total, g3_total]
-            })
-            chp = alt.Chart(comp).mark_arc().encode(theta="Monto:Q", color="Concepto:N", tooltip=["Concepto","Monto"])
-            st.altair_chart(chp, use_container_width=True)
+        # -------- Histórico rápido (opcional): ver meses anteriores en una línea ----------
+        hist = (
+            df.assign(mes=df["mes"].dt.date)
+            .groupby("mes", as_index=False)
+            .apply(lambda d: pd.Series({
+                "toto_inv_18": float((d[d["inversor"].str.upper()==TOTO_INV_NAME.upper()]["costo"]*TOTO_INV_PCT).sum()),
+                "toto_vend_2p": float(((d[(d["vendedor"].str.upper()==TOTO_VENDOR_NAME.upper()) & (d["cuotas"]>=2)]["venta"] - d[(d["vendedor"].str.upper()==TOTO_VENDOR_NAME.upper()) & (d["cuotas"]>=2)]["costo"]) - (d[(d["vendedor"].str.upper()==TOTO_VENDOR_NAME.upper()) & (d["cuotas"]>=2)]["comision"] if restar_comision_cuotas else 0)).sum()),
+                "toto_vend_1p": float((d[(d["vendedor"].str.upper()==TOTO_VENDOR_NAME.upper()) & (d["cuotas"]==1)]["venta"] - d[(d["vendedor"].str.upper()==TOTO_VENDOR_NAME.upper()) & (d["cuotas"]==1)]["costo"]).sum())
+            }))
+        )
+        if not hist.empty:
+            hist["total_toto"] = hist["toto_inv_18"] + hist["toto_vend_2p"] + hist["toto_vend_1p"]
+            ch2 = alt.Chart(hist).mark_line(point=True).encode(
+                x=alt.X("mes:T", title="Mes"),
+                y=alt.Y("total_toto:Q", title="Total TOTO"),
+                tooltip=["mes:T","total_toto:Q","toto_inv_18:Q","toto_vend_2p:Q","toto_vend_1p:Q"]
+            ).properties(height=240, title="Total TOTO por mes (histórico)")
+            st.altair_chart(ch2, use_container_width=True)
 
     with tab_crear:
         with card("Nueva venta", "➕"):

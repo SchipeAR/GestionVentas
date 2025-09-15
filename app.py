@@ -1509,6 +1509,7 @@ if is_admin_user:
 
         # ---------- KPIs ----------
         m0 = datetime(int(anio), int(mes), 1)
+
         c1, c2, c3 = st.columns(3)
         c1.metric(f"TOTO inversor (18%) — {m0:%m/%Y}", fmt_money_up(g1_total))
         c2.metric("TOTO vendedor (2+ cuotas)", fmt_money_up(g2_total))
@@ -1516,9 +1517,11 @@ if is_admin_user:
 
         c4, c5 = st.columns(2)
         c4.metric("Total TOTO (1+2+3)", fmt_money_up(g4_total))
-        c5.metric("Ganancia TOTAL (negocio + 18% TOTO inversor)", fmt_money_up(g5_total))
+        # ← aquí ahora va Vendedores (no Toto)
+        c5.metric("Vendedores (no Toto)", fmt_money_up(g_extra_no_toto_vend))
 
-        st.metric("Vendedores (no Toto)", fmt_money_up(g_extra_no_toto_vend))
+        # ← y abajo, en el lugar donde estaba 'Vendedores', mostramos Ganancia TOTAL
+        st.metric("Ganancia TOTAL (negocio + 18% TOTO inversor)", fmt_money_up(g5_total))
 
 
     with tab_crear:

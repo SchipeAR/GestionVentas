@@ -1498,14 +1498,14 @@ if is_admin_user:
         # total de Toto vendedor (2+ y 1 pago)
         gan_toto_vendedor_total = float(df_m.loc[mask_vend_toto, "gan_vendor"].sum())
 
-        # 5) Ganancia TOTAL = (todos los vendedores, incluido Toto) + 18% de TOTO inversor
-        g5_total = g4_total + g_extra_no_toto_vend
-        
+        # ventas NO hechas por Toto vendedor (para tu métrica extra)
+        g_extra_no_toto_vend = float(df_m.loc[~mask_vend_toto, "gan_vendor"].sum())
+
         # 4) Total TOTO (1+2+3) = 18% inversor + Toto vendedor (2+ y 1 pago)
         g4_total = g1_total + gan_toto_vendedor_total
 
-        # ventas NO hechas por Toto vendedor (para tu métrica extra)
-        g_extra_no_toto_vend = float(df_m.loc[~mask_vend_toto, "gan_vendor"].sum())
+        # 5) Ganancia TOTAL = (todos los vendedores, incluido Toto) + 18% de TOTO inversor
+        g5_total = g4_total + g_extra_no_toto_vend
 
         # ---------- KPIs ----------
         m0 = datetime(int(anio), int(mes), 1)

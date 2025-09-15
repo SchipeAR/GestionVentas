@@ -1501,6 +1501,10 @@ if is_admin_user:
         # ventas NO hechas por Toto vendedor (para tu métrica extra)
         g_extra_no_toto_vend = float(df_m.loc[~mask_vend_toto, "gan_vendor"].sum())
 
+        # Ganancia CUOTAS (solo 2+ cuotas): Toto(2+) + No Toto(2+)
+        g_no_toto_2p = float(df_m.loc[(~mask_vend_toto) & (df_m["cuotas"] >= 2), "gan_vendor"].sum())
+        g_cuotas_total = g2_total + g_no_toto_2p
+
         # 4) Total TOTO (1+2+3) = 18% inversor + Toto vendedor (2+ y 1 pago)
         g4_total = g1_total + gan_toto_vendedor_total
 
@@ -1519,6 +1523,8 @@ if is_admin_user:
         c4.metric("Total TOTO (1+2+3)", fmt_money_up(g4_total))
         # ← aquí ahora va Vendedores (no Toto)
         c5.metric("Vendedores (no Toto)", fmt_money_up(g_extra_no_toto_vend))
+
+        st.metric("Ganancia CUOTAS", fmt_money_up(g_cuotas_total))
 
         # ← y abajo, en el lugar donde estaba 'Vendedores', mostramos Ganancia TOTAL
         st.metric("Ganancia TOTAL (negocio + 18% TOTO inversor)", fmt_money_up(g5_total))

@@ -1107,6 +1107,15 @@ def recalc_status_for_operation(op_id):
     with get_conn() as con:
         con.execute("UPDATE operations SET estado=?, y_pagado=? WHERE id=?", (estado_venta, y_venta, op_id))
 
+def migrate_weekly_ars():
+    with get_conn() as con:
+        cur = con.cursor()
+        # currency: 'USD' (default) o 'ARS'
+        cur.execute("ALTER TABLE operations ADD COLUMN currency TEXT DEFAULT 'USD'")
+        # freq: 'MENSUAL' (default) o 'SEMANAL'
+        cur.execute("ALTER TABLE operations ADD COLUMN freq TEXT DEFAULT 'MENSUAL'")
+        con.commit()
+
 # =========================
 # Lógica de negocio
 # =========================
@@ -1250,6 +1259,26 @@ def build_installments_df(ops):
             })
     cols = ["operation_id","tipo","idx","amount","paid","paid_at","due_date","cliente","vendedor","inversor"]
     return pd.DataFrame(rows) if rows else pd.DataFrame(columns=cols)
+
+from datetime import timedelta
+
+def add_weeks(d, n):
+    return (d + timedelta(weeks=int(n))) if d else d
+
+def due_date_for(op: dict, idx: int):
+    """
+    Devuelve la fecha de vencimiento de la cuota idx (1-based),
+    según frecuencia mensual o semanal de la operación.
+    """
+    base = parse_iso_or_today(op.get("sale_date") or op.get("created_at"))
+    freq = (op.get("freq") or "MENSUAL").upper()
+    n = max(int(idx) - 1, 0)
+    return add_weeks(base, n) if freq == "SEMANAL" else add_months(base, n)
+
+def fmt_money_any(amount: float, currency: str | None):
+    # usa tu formateador existente y antepone "ARS " si corresponde
+    s = fmt_money_up(float(amount or 0.0))
+    return f"ARS {s}" if (currency or "").upper() == "ARS" else s
 
 # ========= Autenticación y roles =========
 def auth_get_user(username: str):
@@ -1565,6 +1594,20 @@ if is_admin_user:
                 proveedor = st.text_input("Proveedor", value="", key="crear_proveedor")
                 descripcion = st.text_input("Descripción (celular vendido)", value="", key="crear_desc")
 
+                col_m1, col_m2 = st.columns(2)
+                with col_m1:
+                    moneda = st.selectbox(
+                        "Moneda", ["USD", "ARS"],
+                        index=0,
+                        key=f"{key_prefix}_nv_moneda"  # usa key_prefix si ya lo usás en esta vista
+                    )
+                with col_m2:
+                    frecuencia = st.selectbox(
+                        "Frecuencia de cuotas", ["MENSUAL", "SEMANAL"],
+                        index=0,
+                        key=f"{key_prefix}_nv_freq",
+                        help="Elegí SEMANAL para ventas en pesos con cuotas semanales"
+                    )
                 costo  = st.number_input("Costo (neto)", min_value=0.0, step=0.01, format="%.2f", key="crear_costo")
                 venta  = st.number_input("Venta", min_value=0.0, step=0.01, format="%.2f", key="crear_venta")
                 cuotas = st.number_input("Cuotas", min_value=0, step=1, key="crear_cuotas")
@@ -1595,7 +1638,8 @@ if is_admin_user:
                     inv_pct_effective = 0.0 if int(cuotas or 0) == 1 else float(inv_pct_ui)
                     precio_compra = calcular_precio_compra(costo, inversor, inv_pct_effective / 100.0)
                     comision_auto = calc_comision_auto(venta, costo)
-                    
+                    op["currency"] = (moneda or "USD")
+                    op["freq"]     = (frecuencia or "MENSUAL")
                     op = {
                             "tipo": "VENTA",
                             "descripcion": descripcion.strip() or None,
@@ -1714,22 +1758,41 @@ with tab_listar:
         ops_cancel = [op for op in ops_multi_all if _is_cancelado(op)]     # solo 2+ cuotas canceladas
         ops_multi  = [op for op in ops_multi_all if not _is_cancelado(op)] # 2+ cuotas vigentes
 
-        # Tabs
-        tabs = st.tabs(["Cuotas (2+)", "Un pago (1)", "Cancelados"])
+        # ================== LISTADO & GESTIÓN ==================
+        # Datasets base
+        try:
+            ops_all = ops_all  # si ya lo calculaste arriba, reúsalo
+        except NameError:
+            ops_all = list_operations(user_scope_filters({})) or []
 
-        # ----------- función de render compartida (no toques nada) -----------
+        def _is_weekly_ars(op):
+            return str(op.get("currency","USD")).upper()=="ARS" and str(op.get("freq","MENSUAL")).upper()=="SEMANAL"
+
+        # Particiones
+        ops_sem    = [op for op in ops_all if _is_weekly_ars(op) and (op.get("estado") or "") != "CANCELADO"]
+        ops_cancel = [op for op in ops_all if (op.get("estado") or "") == "CANCELADO"]
+        ops_uno    = [op for op in ops_all if not _is_weekly_ars(op) and int(op.get("O") or 0) == 1 and (op.get("estado") or "") != "CANCELADO"]
+        ops_multi  = [op for op in ops_all if not _is_weekly_ars(op) and int(op.get("O") or 0) >= 2 and (op.get("estado") or "") != "CANCELADO"]
+
+        sub_tab_multi, sub_tab_uno, sub_tab_cancel, sub_tab_sem = st.tabs(
+            ["Cuotas (2+)", "Un pago (1)", "Cancelados", "Semanal (PESOS)"]
+        )
+
+        # ----------- función de render compartida -----------
         def render_listado(ops, key_prefix: str):
             if not ops:
                 st.info("No hay ventas registradas en este grupo.")
                 return
 
             rows = []
+
             def calc_ganancia_neta(venta_total: float, purchase_price: float,
-                                   comision_total: float, vendedor: str) -> float:
+                                comision_total: float, vendedor: str) -> float:
                 """Si el vendedor es Toto Donofrio, no se descuenta comisión."""
                 if (vendedor or "").strip().upper() == "TOTO DONOFRIO":
                     return venta_total - purchase_price
                 return venta_total - purchase_price - comision_total
+
             for op in ops:
                 total_cuotas_venta = int(op.get("O") or 0)
                 fecha_mostrar = op.get("sale_date") or op.get("created_at")
@@ -1751,7 +1814,6 @@ with tab_listar:
                 # --- COMPRA (pagos a inversor) ---
                 pagado_compra = sum_paid(op["id"], is_purchase=True)
                 pagadas_compra = count_paid_installments(op["id"], is_purchase=True)
-                # cantidad real de cuotas de COMPRA (6 u 1). Si falla, fallback por regla.
                 try:
                     n_compra_real = len(list_installments(op["id"], is_purchase=True)) or compra_cuotas_count(total_cuotas_venta)
                 except Exception:
@@ -1777,7 +1839,7 @@ with tab_listar:
                     "Revendedor": op.get("revendedor") or "",
                     "Costo": fmt_money_up(costo_neto),
                     "Precio Compra": "",  # sin flecha en VENTA
-                    "Venta": fmt_money_up(venta_total),
+                    "Venta": fmt_money_any(venta_total, op.get("currency")),
                     "Comisión": fmt_money_up(comision_total),
                     "Comisión x cuota": fmt_money_up(comision_x_cuota),
                     "Cuotas": fmt_int(total_cuotas_venta),
@@ -1790,7 +1852,7 @@ with tab_listar:
                     "Ganancia": fmt_money_up(ganancia),
                 })
 
-                # --- Fila COMPRA (segundo) (flechas en celdas vacías) ---
+                # --- Fila COMPRA (segundo) ---
                 def up_arrow_if_empty(val):
                     return val if (isinstance(val, str) and val.strip()) else "↑"
 
@@ -1809,9 +1871,9 @@ with tab_listar:
                         "Venta": up_arrow_if_empty(""),
                         "Comisión": up_arrow_if_empty(""),
                         "Comisión x cuota": up_arrow_if_empty(""),
-                        "Cuotas": fmt_int(n_compra_real),               # ← 6 u 1 según regla
+                        "Cuotas": fmt_int(n_compra_real),
                         "Cuotas pendientes": fmt_int(pendientes_compra),
-                        "Valor por cuota": up_arrow_if_empty(""), 
+                        "Valor por cuota": up_arrow_if_empty(""),
                         "$ Pagado": fmt_money_up(pagado_compra),
                         "$ Pendiente": fmt_money_up(pendiente_compra),
                         "Estado": estado_compra,
@@ -1823,7 +1885,10 @@ with tab_listar:
             df_ops = pd.DataFrame(rows)
             if key_prefix == "uno":
                 df_ops = df_ops[df_ops["Tipo"] != "COMPRA"].reset_index(drop=True)
+
             editor_key = f"{key_prefix}_listado_editor"
+
+            # leer selid actual de la URL
             sel_param = qp_get("selid")
             if isinstance(sel_param, list):
                 sel_param = sel_param[0] if sel_param else None
@@ -1832,24 +1897,21 @@ with tab_listar:
             except Exception:
                 current_selid = None
 
-            # 2) Si cambió el selid respecto al último render, limpiar el estado del editor
+            # limpiar estado del editor si cambia selid
             last_selid = st.session_state.get(f"{editor_key}__last_selid")
             if last_selid != current_selid:
                 st.session_state.pop(editor_key, None)
             st.session_state[f"{editor_key}__last_selid"] = current_selid
 
-            # 3) Construir "Elegir": True sólo para la VENTA seleccionada; COMPRA queda vacío
+            # marcar checkbox sólo en la fila VENTA seleccionada
             def _mark(tipo, idventa, curr):
                 if tipo == "VENTA":
                     return bool(curr and idventa == curr)
                 return None
-
             df_ops["Elegir"] = [_mark(t, i, current_selid) for t, i in zip(df_ops["Tipo"], df_ops["ID venta"])]
 
-            # 4) Guardar el conjunto de IDs tildados “esperado” para detectar el casillero nuevo
+            # recordar conjunto esperado (para detectar cambios)
             st.session_state[f"{editor_key}__true_ids"] = {current_selid} if current_selid else set()
-
-
 
             cols_order = [
                 "Elegir","ID venta","Tipo","Descripción","Cliente","Proveedor","Inversor","Vendedor","Revendedor","Costo",
@@ -1858,28 +1920,22 @@ with tab_listar:
             ]
             df_ops = df_ops[cols_order]
 
-
-
-            # ---- Mostrar tabla (ocultar columnas a vendedores) ----
+            # ---- Mostrar tabla (ocultar columnas y toggle) ----
             try:
                 seller_flag = bool(seller)
             except NameError:
                 seller_flag = not is_admin()
-            if seller:
-                cols_hide = ["Inversor","Ganancia","Costo","Precio Compra"]
-                df_show = df_ops.drop(columns=cols_hide)
-            else:
-                df_show = df_ops
-            
+
             fullcols = st.toggle("Vista completa (todas las columnas)", value=False, key=f"{key_prefix}_fullcols")
-            PERSONAL_HIDE_ALWAYS = ["Proveedor", "Venta", "Costo", "Inversor", "Ganancia"]       # <-- editá a gusto
-            PERSONAL_HIDE_SOLO_UNO = ["Cuotas", "Cuotas pendientes", "Comisión x cuota", "Estado"]  # ya las ocultábamos en 'uno'
-            cols_hide_base = ["Inversor", "Ganancia", "Costo", "Precio Compra"] if (seller_flag and not fullcols) else []
-            cols_hide_uno = ["Cuotas", "Cuotas pendientes", "Comisión x cuota", "Estado"] if (key_prefix == "uno" and not fullcols) else []
-            cols_personal = (PERSONAL_HIDE_ALWAYS + (PERSONAL_HIDE_SOLO_UNO if key_prefix == "uno" else [])) if not fullcols else []
-            cols_to_hide  = (cols_hide_base + cols_hide_uno + cols_personal) if not fullcols else []
+
+            cols_hide_base = ["Inversor","Ganancia","Costo","Precio Compra"] if (seller_flag and not fullcols) else []
+            cols_hide_uno  = ["Cuotas","Cuotas pendientes","Comisión x cuota","Estado"] if (key_prefix=="uno" and not fullcols) else []
+            personal_hide  = [] if fullcols else ["Proveedor"]  # ajustá tus personales si querés
+
+            cols_to_hide = cols_hide_base + cols_hide_uno + personal_hide
             df_show = df_ops.drop(columns=cols_to_hide, errors="ignore")
-            # Config: checkbox solo en VENTA (en COMPRA queda en blanco)
+
+            # Configuración de columnas (checkbox sólo en Elegir; el resto solo lectura)
             colcfg = {
                 "Elegir": st.column_config.CheckboxColumn(
                     label="Elegir",
@@ -1887,7 +1943,6 @@ with tab_listar:
                     default=False
                 )
             }
-            # El resto, solo lectura
             for col in df_show.columns:
                 if col == "Elegir":
                     continue
@@ -1898,15 +1953,50 @@ with tab_listar:
                 hide_index=True,
                 use_container_width=True,
                 num_rows="fixed",
-                column_config={
-                    "Seleccionar": st.column_config.LinkColumn(
-                        label="Seleccionar",
-                        help="Click para gestionar este ID",
-                        display_text="Elegir"
-                    )
-                },
-                key=f"{key_prefix}_listado_editor",
-)
+                column_config=colcfg,
+                key=editor_key,
+            )
+
+            # --- selección exclusiva y actualización de ?selid= (sin navegar) ---
+            try:
+                # nos quedamos con filas VENTA marcadas
+                if "Tipo" in edited.columns and "ID venta" in edited.columns and "Elegir" in edited.columns:
+                    marked = edited[(edited["Tipo"]=="VENTA") & (edited["Elegir"]==True)]
+                    new_selid = int(marked["ID venta"].iloc[0]) if not marked.empty else None
+                else:
+                    new_selid = None
+            except Exception:
+                new_selid = None
+
+            if new_selid is not None and new_selid != current_selid:
+                st.query_params.update(selid=str(new_selid))  # soft update
+                st.rerun()
+            elif new_selid is None and current_selid is not None:
+                # si destildó todo, quitamos selid
+                qp = st.query_params
+                if "selid" in qp:
+                    del qp["selid"]
+                    st.query_params.update(qp)
+                    st.rerun()
+
+            # (opcional) guardar la tabla completa para el chatbot, etc.
+            st.session_state[f"{key_prefix}_tabla_principal"] = df_ops.copy()
+
+
+        # ===== Render de cada pestaña =====
+        with sub_tab_multi:
+            render_listado(ops_multi, key_prefix="multi")
+
+        with sub_tab_uno:
+            render_listado(ops_uno, key_prefix="uno")
+
+        with sub_tab_cancel:
+            render_listado(ops_cancel, key_prefix="cancel")
+
+        with sub_tab_sem:
+            st.caption("Ventas en **PESOS** con **cuotas SEMANALES**")
+            render_listado(ops_sem, key_prefix="sem")
+
             # Procesar selección detectando el casillero NUEVO y sin loop infinito
             try:
                 ventas = edited[edited["Tipo"] == "VENTA"]
@@ -3091,7 +3181,7 @@ with tab_cal:
             if not bool(c["paid"]):
                 # fecha de vencimiento de cada cuota
                 base = parse_iso_or_today(op_.get("sale_date") or op_.get("created_at"))
-                due = add_months(base, max(int(c["idx"]) - 1, 0))
+                due = due_date_for(op, int(c["idx"]))
                 event_rows.append({
                     "Fecha": due,                           # datetime/date
                     "Vendedor": op_.get("zona") or "",

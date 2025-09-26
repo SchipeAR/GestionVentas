@@ -1714,8 +1714,18 @@ with tab_listar:
         ops_cancel = [op for op in ops_multi_all if _is_cancelado(op)]     # solo 2+ cuotas canceladas
         ops_multi  = [op for op in ops_multi_all if not _is_cancelado(op)] # 2+ cuotas vigentes
 
-        # Tabs
-        tabs = st.tabs(["Cuotas (2+)", "Un pago (1)", "Cancelados"])
+        
+        # 👉 Ventas semanales en PESOS (vigentes)
+        try:
+            ops_sem = [op for op in ops_all
+                       if str(op.get("currency","USD")).upper() == "ARS"
+                       and str(op.get("freq","MENSUAL")).upper() == "SEMANAL"
+                       and not _is_cancelado(op)]
+        except Exception:
+            # Si no existen esos campos aún, queda vacío sin romper
+            ops_sem = []
+# Tabs
+        tabs = st.tabs(["Cuotas (2+)", "Un pago (1)", "Cancelados", "Semanal (PESOS)"])
 
         # ----------- función de render compartida (no toques nada) -----------
         def render_listado(ops, key_prefix: str):
@@ -2326,6 +2336,11 @@ with tab_listar:
         with tabs[2]:
             st.caption("Ventas canceladas (solo 2+ cuotas)")
             render_listado(ops_cancel, key_prefix="cancel")
+
+
+        with tabs[3]:
+            st.caption("Ventas en PESOS con cuotas SEMANALES")
+            render_listado(ops_sem, key_prefix="sem")
 
 # --------- INVERSORES (DETALLE POR CADA UNO) ---------
 # Ocultamos la pestaña a los vendedores para no exponer datos globales

@@ -976,30 +976,35 @@ def upsert_operation(op):
             q = """
                 UPDATE operations
                 SET tipo=?, descripcion=?, cliente=?, zona=?, nombre=?, proveedor=?, revendedor=?,
-                    L=?, N=?, O=?, estado=?, y_pagado=?, comision=?, sale_date=?, purchase_price=?
+                    L=?, N=?, O=?, estado=?, y_pagado=?, comision=?, sale_date=?, purchase_price=?,
+                    currency=?, freq=?
                 WHERE id=?
             """
             cur.execute(q, (
                 op["tipo"], op.get("descripcion"), op.get("cliente"), op.get("zona"), op["nombre"],
-                op.get("proveedor"), op.get("revendedor"),            # <<<<<<<<<<<<<< agregado
+                op.get("proveedor"), op.get("revendedor"),
                 op.get("L"), op.get("N"), op.get("O"), op.get("estado"),
                 op.get("y_pagado"), op.get("comision"), op.get("sale_date"),
-                op.get("purchase_price"), op["id"]
+                op.get("purchase_price"),
+                op.get("currency"), op.get("freq"),              # ← agregado
+                op["id"]
             ))
             return op["id"]
         else:
             q = """
                 INSERT INTO operations (
                     tipo, descripcion, cliente, zona, nombre, proveedor, revendedor,
-                    L, N, O, estado, y_pagado, comision, sale_date, purchase_price
-                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    L, N, O, estado, y_pagado, comision, sale_date, purchase_price,
+                    currency, freq
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """
             cur.execute(q, (
                 op["tipo"], op.get("descripcion"), op.get("cliente"), op.get("zona"), op["nombre"],
-                op.get("proveedor"), op.get("revendedor"),            # <<<<<<<<<<<<<< agregado
+                op.get("proveedor"), op.get("revendedor"),
                 op.get("L"), op.get("N"), op.get("O"), op.get("estado"),
                 op.get("y_pagado"), op.get("comision"), op.get("sale_date"),
-                op.get("purchase_price")
+                op.get("purchase_price"),
+                op.get("currency"), op.get("freq")               # ← agregado
             ))
             return cur.lastrowid
 
@@ -1564,7 +1569,23 @@ if is_admin_user:
                 cliente   = st.text_input("Cliente", value="", key="crear_cliente")
                 proveedor = st.text_input("Proveedor", value="", key="crear_proveedor")
                 descripcion = st.text_input("Descripción (celular vendido)", value="", key="crear_desc")
-
+                c_mon, c_freq = st.columns(2)
+                with c_mon:
+                    moneda = st.selectbox(
+                        "Moneda", ["USD", "ARS"],
+                        index=0,
+                        key="nv_moneda",
+                        help="Elegí ARS para ventas en pesos"
+                    )
+                with c_freq:
+                    # Si elegís ARS, por defecto SEMANAL; si elegís USD, por defecto MENSUAL
+                    default_freq = "SEMANAL" if (moneda == "ARS") else "MENSUAL"
+                    frecuencia = st.selectbox(
+                        "Frecuencia de cuotas", ["MENSUAL", "SEMANAL"],
+                        index=(0 if default_freq=="MENSUAL" else 1),
+                        key="nv_freq",
+                        help="SEMANAL = cuotas cada 7 días"
+                    )
                 costo  = st.number_input("Costo (neto)", min_value=0.0, step=0.01, format="%.2f", key="crear_costo")
                 venta  = st.number_input("Venta", min_value=0.0, step=0.01, format="%.2f", key="crear_venta")
                 cuotas = st.number_input("Cuotas", min_value=0, step=1, key="crear_cuotas")
@@ -1613,6 +1634,8 @@ if is_admin_user:
                             "sale_date": to_iso(fecha),            # guarda sin hora (YYYY-MM-DD)
                             "purchase_price": float(precio_compra)
                         }
+                    op["currency"] = moneda or "USD"
+                    op["freq"]     = frecuencia or "MENSUAL"
                     new_id = upsert_operation(op)
 
                         # cuotas

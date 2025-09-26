@@ -755,7 +755,26 @@ def set_installment_note(iid: int, note: str, updated_at_iso: str | None = None)
         ON CONFLICT(iid) DO UPDATE SET note=excluded.note, updated_at=excluded.updated_at
         """, (iid, note, updated_at_iso or to_iso(date.today())))
         con.commit()
+def ensure_ops_cols_weekly_ars():
+    """Garantiza que operations tenga currency y freq. Es idempotente."""
+    with get_conn() as con:
+        cur = con.cursor()
+        cur.execute("PRAGMA table_info('operations')")
+        cols = {row[1] for row in cur.fetchall()}  # set de nombres
 
+        if "currency" not in cols:
+            try:
+                cur.execute("ALTER TABLE operations ADD COLUMN currency TEXT DEFAULT 'USD'")
+            except Exception:
+                pass  # por si ya existe
+
+        if "freq" not in cols:
+            try:
+                cur.execute("ALTER TABLE operations ADD COLUMN freq TEXT DEFAULT 'MENSUAL'")
+            except Exception:
+                pass  # por si ya existe
+
+        con.commit()
 # ------------------- Utilidades de normalización -------------------
 def normalize_text(t: str) -> str:
     t = unicodedata.normalize('NFKD', t)
@@ -1390,6 +1409,7 @@ def rename_admin_user(old_username: str, new_username: str, current_password: st
 # =========================
 # UI
 # =========================
+ensure_ops_cols_weekly_ars()
 init_db()
 restore_on_boot_once()
 require_login()

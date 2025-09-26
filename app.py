@@ -1484,13 +1484,15 @@ if is_admin_user:
         df["mes"] = pd.to_datetime(df["mes"], errors="coerce")
         df = df.dropna(subset=["mes"])
         df_m = df[(df["mes"].dt.year == int(anio)) & (df["mes"].dt.month == int(mes))].copy()
+        df_m_usd = df_m[df_m["currency"].fillna("USD").str.upper() != "ARS"].copy()
+        df_m_ars = df_m[df_m["currency"].fillna("USD").str.upper() == "ARS"].copy()
         if df_m.empty:
             st.info(f"Sin datos para {mes:02d}/{anio}.")
             st.stop()
 
         # ---------- 18% de TOTO inversor (del mes) ----------
-        mask_inv_toto = df_m["inversor"].fillna("").str.upper() == TOTO_INV_NAME.upper()
-        g1_total = float((df_m.loc[mask_inv_toto, "costo"].astype(float) * float(TOTO_INV_PCT)).sum())
+        mask_inv_toto_usd = df_m_usd["inversor"].fillna("").str.upper() == TOTO_INV_NAME.upper()
+        g1_total_usd = float((df_m_usd.loc[mask_inv_toto_usd, "costo"].astype(float) * float(TOTO_INV_PCT)).sum())
 
         # ---------- Ganancia por operación (reconocida 100% en el mes de la venta) ----------
         def _gan_vendor_por_op(r):
@@ -1503,56 +1505,81 @@ if is_admin_user:
             es_toto  = (vendedor == TOTO_VENDOR_NAME.upper())
 
             if cuotas == 1:
-                # 1 pago: Toto => venta - costo ; otros => venta - costo - comisión
                 return (venta - costo) if es_toto else (venta - costo - comision)
             else:
-                # 2+ cuotas: Toto => venta - purchase_price ; otros => venta - purchase_price - comisión
                 return (venta - compra) if es_toto else (venta - compra - comision)
 
-        df_m["gan_vendor"] = df_m.apply(_gan_vendor_por_op, axis=1)
+        df_m_usd["gan_vendor"] = df_m_usd.apply(_gan_vendor_por_op, axis=1)
 
-        # ---------- Desgloses ----------
-        mask_vend_toto = df_m["vendedor"].fillna("").str.upper() == TOTO_VENDOR_NAME.upper()
+        mask_vend_toto_usd = df_m_usd["vendedor"].fillna("").str.upper() == TOTO_VENDOR_NAME.upper()
 
-        # 2) Toto vendedor (2+ cuotas)
-        g2_total = float(df_m.loc[mask_vend_toto & (df_m["cuotas"] >= 2), "gan_vendor"].sum())
+        # (USD) Toto vendedor 2+ / 1p / total
+        g2_total_usd = float(df_m_usd.loc[mask_vend_toto_usd & (df_m_usd["cuotas"] >= 2), "gan_vendor"].sum())
+        g3_total_usd = float(df_m_usd.loc[mask_vend_toto_usd & (df_m_usd["cuotas"] == 1), "gan_vendor"].sum())
+        gan_toto_vendedor_total_usd = float(df_m_usd.loc[mask_vend_toto_usd, "gan_vendor"].sum())
 
-        # 3) Toto vendedor (1 pago)
-        g3_total = float(df_m.loc[mask_vend_toto & (df_m["cuotas"] == 1), "gan_vendor"].sum())
+        # (USD) Vendedores no Toto
+        g_no_toto_usd = float(df_m_usd.loc[~mask_vend_toto_usd, "gan_vendor"].sum())
 
-        # total de Toto vendedor (2+ y 1 pago)
-        gan_toto_vendedor_total = float(df_m.loc[mask_vend_toto, "gan_vendor"].sum())
+        # (USD) Totales
+        g4_total_usd = g1_total_usd + gan_toto_vendedor_total_usd
+        g5_total_usd = g4_total_usd + g_no_toto_usd
 
-        # ventas NO hechas por Toto vendedor (para tu métrica extra)
-        g_extra_no_toto_vend = float(df_m.loc[~mask_vend_toto, "gan_vendor"].sum())
-
-        # Ganancia CUOTAS (solo 2+ cuotas): Toto(2+) + No Toto(2+)
-        g_no_toto_2p = float(df_m.loc[(~mask_vend_toto) & (df_m["cuotas"] >= 2), "gan_vendor"].sum())
-        g_cuotas_total = g2_total + g_no_toto_2p
-
-        # 4) Total TOTO (1+2+3) = 18% inversor + Toto vendedor (2+ y 1 pago)
-        g4_total = g1_total + gan_toto_vendedor_total
-
-        # 5) Ganancia TOTAL = (todos los vendedores, incluido Toto) + 18% de TOTO inversor
-        g5_total = g4_total + g_extra_no_toto_vend
+        # (USD) Ganancia CUOTAS: Toto(2+) + No Toto (2+)
+        g_no_toto_2p_usd = float(df_m_usd.loc[(~mask_vend_toto_usd) & (df_m_usd["cuotas"] >= 2), "gan_vendor"].sum())
+        g_cuotas_total_usd = g2_total_usd + g_no_toto_2p_usd
 
         # ---------- KPIs ----------
         m0 = datetime(int(anio), int(mes), 1)
-
         c1, c2, c3 = st.columns(3)
-        c1.metric(f"TOTO inversor (18%) — {m0:%m/%Y}", fmt_money_up(g1_total))
-        c2.metric("TOTO vendedor (2+ cuotas)", fmt_money_up(g2_total))
-        c3.metric("TOTO vendedor (1 pago)", fmt_money_up(g3_total))
+        c1.metric(f"TOTO inversor (18%) — {m0:%m/%Y}", fmt_money_up(g1_total_usd))
+        c2.metric("TOTO vendedor (2+ cuotas)", fmt_money_up(g2_total_usd))
+        c3.metric("TOTO vendedor (1 pago)", fmt_money_up(g3_total_usd))
 
         c4, c5 = st.columns(2)
-        c4.metric("Total TOTO (1+2+3)", fmt_money_up(g4_total))
-        # ← aquí ahora va Vendedores (no Toto)
-        c5.metric("Vendedores (no Toto)", fmt_money_up(g_extra_no_toto_vend))
+        c4.metric("Total TOTO (1+2+3)", fmt_money_up(g4_total_usd))
+        c5.metric("Vendedores (no Toto)", fmt_money_up(g_no_toto_usd))
 
-        st.metric("Ganancia CUOTAS", fmt_money_up(g_cuotas_total))
+        st.metric("Ganancia CUOTAS", fmt_money_up(g_cuotas_total_usd))
+        st.metric("Ganancia TOTAL (negocio + 18% TOTO inversor)", fmt_money_up(g5_total_usd))
+        
+        st.divider()
+        st.subheader("💵 ARS — Ganancias del mes (solo pesos)")
 
-        # ← y abajo, en el lugar donde estaba 'Vendedores', mostramos Ganancia TOTAL
-        st.metric("Ganancia TOTAL (negocio + 18% TOTO inversor)", fmt_money_up(g5_total))
+        if df_m_ars.empty:
+            st.info("No hay ventas en ARS en el mes seleccionado.")
+        else:
+            # 18% TOTO inversor sobre ARS
+            mask_inv_toto_ars = df_m_ars["inversor"].fillna("").str.upper() == TOTO_INV_NAME.upper()
+            g1_total_ars = float((df_m_ars.loc[mask_inv_toto_ars, "costo"].astype(float) * float(TOTO_INV_PCT)).sum())
+
+            # Ganancias por operación en ARS (misma regla)
+            df_m_ars = df_m_ars.copy()
+            df_m_ars["gan_vendor"] = df_m_ars.apply(_gan_vendor_por_op, axis=1)
+            mask_vend_toto_ars = df_m_ars["vendedor"].fillna("").str.upper() == TOTO_VENDOR_NAME.upper()
+
+            g2_total_ars = float(df_m_ars.loc[mask_vend_toto_ars & (df_m_ars["cuotas"] >= 2), "gan_vendor"].sum())
+            g3_total_ars = float(df_m_ars.loc[mask_vend_toto_ars & (df_m_ars["cuotas"] == 1), "gan_vendor"].sum())
+            gan_toto_vendedor_total_ars = float(df_m_ars.loc[mask_vend_toto_ars, "gan_vendor"].sum())
+            g_no_toto_ars = float(df_m_ars.loc[~mask_vend_toto_ars, "gan_vendor"].sum())
+
+            g4_total_ars = g1_total_ars + gan_toto_vendedor_total_ars
+            g5_total_ars = g4_total_ars + g_no_toto_ars
+
+            g_no_toto_2p_ars = float(df_m_ars.loc[(~mask_vend_toto_ars) & (df_m_ars["cuotas"] >= 2), "gan_vendor"].sum())
+            g_cuotas_total_ars = g2_total_ars + g_no_toto_2p_ars
+
+            c1, c2, c3 = st.columns(3)
+            c1.metric(f"TOTO inversor (18%) ARS — {m0:%m/%Y}", fmt_money_up(g1_total_ars))
+            c2.metric("TOTO vendedor (2+ cuotas) ARS", fmt_money_up(g2_total_ars))
+            c3.metric("TOTO vendedor (1 pago) ARS", fmt_money_up(g3_total_ars))
+
+            c4, c5 = st.columns(2)
+            c4.metric("Total TOTO ARS (1+2+3)", fmt_money_up(g4_total_ars))
+            c5.metric("Vendedores ARS (no Toto)", fmt_money_up(g_no_toto_ars))
+
+            st.metric("Ganancia CUOTAS ARS", fmt_money_up(g_cuotas_total_ars))
+            st.metric("Ganancia TOTAL ARS (negocio + 18% TOTO inversor)", fmt_money_up(g5_total_ars))
 
 
     with tab_crear:
@@ -1746,16 +1773,18 @@ with tab_listar:
                 return int(op.get("O") or 0)
             except Exception:
                 return 0
+        def _is_weekly_ars(op):
+            return str(op.get("currency","USD")).upper()=="ARS" and str(op.get("freq","MENSUAL")).upper()=="SEMANAL"
 
         # 👉 Un pago: SIEMPRE acá, sin importar el estado
-        ops_uno = [op for op in ops_all if _cuotas(op) == 1]
-
+        ops_uno    = [op for op in ops_all if (not _is_weekly_ars(op)) and int(op.get("O") or 0) == 1 and not _is_cancelado(op)]
+        ops_sem    = [op for op in ops_all if _is_weekly_ars(op) and not _is_cancelado(op)]
         # 👉 Candidatas a 2+ cuotas
         ops_multi_all = [op for op in ops_all if _cuotas(op) >= 2]
 
         # 👉 Dentro de 2+ cuotas, dividimos vigentes vs canceladas
-        ops_cancel = [op for op in ops_multi_all if _is_cancelado(op)]     # solo 2+ cuotas canceladas
-        ops_multi  = [op for op in ops_multi_all if not _is_cancelado(op)] # 2+ cuotas vigentes
+        ops_cancel = [op for op in ops_all if _is_cancelado(op)]
+        ops_multi  = [op for op in ops_all if (not _is_weekly_ars(op)) and int(op.get("O") or 0) >= 2 and not _is_cancelado(op)]
 
         
         # 👉 Ventas semanales en PESOS (vigentes)
@@ -2706,6 +2735,62 @@ if is_admin_user:
                 st.dataframe(df_v, use_container_width=True)
             else:
                 st.info("No hay movimientos para el mes seleccionado.")
+
+            st.divider()
+            st.subheader("💵 KPI — Ganancias del mes en ARS")
+
+            from datetime import date, datetime
+            hoy = date.today()
+            an, me = hoy.year, hoy.month  # o usa los mismos controles de mes que ya tengas
+
+            ops = list_operations(user_scope_filters({})) or []
+            rows = []
+            for op in ops:
+                dt = parse_iso_or_today(op.get("sale_date") or op.get("created_at"))
+                rows.append({
+                    "mes": datetime(dt.year, dt.month, 1),
+                    "venta": float(op.get("N") or 0.0),
+                    "costo": float(op.get("L") or 0.0),
+                    "compra": float(op.get("purchase_price") or 0.0),
+                    "comision": float(op.get("comision") or 0.0),
+                    "cuotas": int(op.get("O") or 0),
+                    "inversor": (op.get("nombre") or "").strip(),
+                    "vendedor": (op.get("zona") or "").strip(),
+                    "currency": (op.get("currency") or "USD"),
+                })
+            import pandas as pd
+            df = pd.DataFrame(rows)
+            df["mes"] = pd.to_datetime(df["mes"], errors="coerce")
+            df = df.dropna(subset=["mes"])
+
+            df_m_ars = df[(df["mes"].dt.year==an) & (df["mes"].dt.month==me) & (df["currency"].str.upper()=="ARS")].copy()
+
+            def _gan_vendor_por_op_row(r):
+                cuotas   = int(r["cuotas"] or 0)
+                vendedor = (r["vendedor"] or "").strip().upper()
+                venta, compra, costo, comision = float(r["venta"] or 0.0), float(r["compra"] or 0.0), float(r["costo"] or 0.0), float(r["comision"] or 0.0)
+                if cuotas == 1:
+                    return (venta - costo) if (vendedor=="TOTO DONOFRIO") else (venta - costo - comision)
+                else:
+                    return (venta - compra) if (vendedor=="TOTO DONOFRIO") else (venta - compra - comision)
+
+            if df_m_ars.empty:
+                st.info("No hay ventas ARS en el mes actual.")
+            else:
+                df_m_ars["gan_vendor"] = df_m_ars.apply(_gan_vendor_por_op_row, axis=1)
+                mask_inv_toto_ars = df_m_ars["inversor"].fillna("").str.upper() == TOTO_INV_NAME.upper()
+                g1_total_ars = float((df_m_ars.loc[mask_inv_toto_ars, "costo"].astype(float) * float(TOTO_INV_PCT)).sum())
+                mask_vend_toto_ars = df_m_ars["vendedor"].fillna("").str.upper() == TOTO_VENDOR_NAME.upper()
+
+                g2_total_ars = float(df_m_ars.loc[mask_vend_toto_ars & (df_m_ars["cuotas"] >= 2), "gan_vendor"].sum())
+                g3_total_ars = float(df_m_ars.loc[mask_vend_toto_ars & (df_m_ars["cuotas"] == 1), "gan_vendor"].sum())
+                gan_toto_vendedor_total_ars = float(df_m_ars.loc[mask_vend_toto_ars, "gan_vendor"].sum())
+                g_no_toto_ars = float(df_m_ars.loc[~mask_vend_toto_ars, "gan_vendor"].sum())
+
+                g4_total_ars = g1_total_ars + gan_toto_vendedor_total_ars
+                g5_total_ars = g4_total_ars + g_no_toto_ars
+
+                st.metric("Ganancia TOTAL ARS (negocio + 18% TOTO inversor)", fmt_money_up(g5_total_ars))
 
 
 # --------- 👤 ADMINISTRACIÓN (solo admin) ---------

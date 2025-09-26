@@ -1471,6 +1471,7 @@ if is_admin_user:
                 "cuotas": int(op.get("O") or 0),
                 "inversor": (op.get("nombre") or "").strip(),
                 "vendedor": (op.get("zona") or "").strip(),
+                "currency": (op.get("currency") or "USD"),
             })
 
         df = pd.DataFrame(rows) if rows else pd.DataFrame(columns=[
@@ -1483,6 +1484,10 @@ if is_admin_user:
         # asegurar dtype datetime y filtrar mes
         df["mes"] = pd.to_datetime(df["mes"], errors="coerce")
         df = df.dropna(subset=["mes"])
+        if "currency" not in df.columns:
+            df["currency"] = "USD"
+        else:
+            df["currency"] = df["currency"].fillna("USD").astype(str)
         df_m = df[(df["mes"].dt.year == int(anio)) & (df["mes"].dt.month == int(mes))].copy()
         df_m_usd = df_m[df_m["currency"].fillna("USD").str.upper() != "ARS"].copy()
         df_m_ars = df_m[df_m["currency"].fillna("USD").str.upper() == "ARS"].copy()

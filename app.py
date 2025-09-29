@@ -2425,6 +2425,13 @@ if is_admin_user:
     with tab_inversores:
         with card("Inversores", "🏦"):
 
+            # NEW: imports y datos compartidos necesarios en este scope
+            from datetime import date as _date     # para hoy = _date.today()
+            import pandas as pd                    # para asegurar tipos de fecha
+            try:
+                _ = ops_all  # si ya existe arriba, no hacemos nada
+            except NameError:
+                ops_all = list_operations(user_scope_filters({})) or []   # NEW: fallback
 
             ops = list_operations()
             if not ops:
@@ -2448,6 +2455,10 @@ if is_admin_user:
                     return float((inv_ops["costo_neto"] * 0.18).sum())
                 
                 hoy = _date.today()
+
+                # ===================== Cuotas a inversores por MES =====================
+                st.divider()
+                st.subheader("💸 Cuotas a inversores por mes")
 
                 # Controles: año/mes, solo impagas, filtro de inversor
                 c1, c2, c3, c4 = st.columns([1,1,1,2])
@@ -2503,9 +2514,11 @@ if is_admin_user:
                                 "Estado": ("Pagada" if pagada else "Impaga")
                             })
 
-                st.metric(f"Total a pagar en {int(inv_month):02d}/{int(inv_year)}" + (" (impagas)" if solo_impagas else ""), f"{total_mes:,.2f}")
+                st.metric(
+                    f"Total a pagar en {int(inv_month):02d}/{int(inv_year)}" + (" (impagas)" if solo_impagas else ""),
+                    f"{total_mes:,.2f}"
+                )
 
-                import pandas as pd
                 if rows:
                     df_det = pd.DataFrame(rows)
                     # Resumen por inversor
@@ -2513,7 +2526,10 @@ if is_admin_user:
                     cA, cB = st.columns([1,2])
                     with cA:
                         st.markdown("**Resumen por inversor**")
-                        st.dataframe(df_res.sort_values("Total del mes", ascending=False), use_container_width=True, hide_index=True)
+                        st.dataframe(
+                            df_res.sort_values("Total del mes", ascending=False),
+                            use_container_width=True, hide_index=True
+                        )
                     with cB:
                         st.markdown("**Detalle de cuotas del mes**")
                         st.dataframe(
@@ -2526,6 +2542,11 @@ if is_admin_user:
 
                 st.divider()
                 st.subheader("Detalle por inversor")
+
+                # NEW: usar el mismo mes/año elegidos arriba para esta métrica
+                anio_actual = int(inv_year)   # NEW
+                mes_actual  = int(inv_month)  # NEW
+
                 for inv in ["GONZA", "MARTIN", "TOBIAS (YO)"]:
                     st.markdown(f"### {inv}")
                     inv_ops = ops_df[ops_df["inversor"].fillna("").astype(str).str.upper()==inv]
@@ -2534,6 +2555,12 @@ if is_admin_user:
                         continue
 
                     inv_ins = ins_df[ins_df["inversor"].fillna("").astype(str).str.upper()==inv]
+
+                    # NEW: asegurar dtype datetime en due_date antes de filtrar por mes
+                    if "due_date" in inv_ins.columns:
+                        inv_ins = inv_ins.copy()
+                        inv_ins["due_date"] = pd.to_datetime(inv_ins["due_date"], errors="coerce")
+
                     inv_total_compra = float(inv_ops["precio_compra"].sum())
                     inv_pagado = float(inv_ins[(inv_ins["tipo"]=="COMPRA") & (inv_ins["paid"]==True)]["amount"].sum())
                     inv_pendiente = inv_total_compra - inv_pagado
@@ -2544,13 +2571,26 @@ if is_admin_user:
                     c2.metric("Pagado a este inversor", f"${inv_pagado:,.2f}")
                     c3.metric("Pendiente con este inversor", f"${inv_pendiente:,.2f}")
 
-                    st.metric("A pagar este mes (impago)", f"${float(inv_ins[(inv_ins['tipo']=='COMPRA') & (inv_ins['paid']==False) & (inv_ins['due_date'].apply(lambda d: d.year==anio_actual and d.month==mes_actual))]['amount'].sum()):,.2f}")
+                    # NEW: métrica mensual impaga usando el mes/año seleccionados arriba
+                    try:
+                        to_pay_month = float(inv_ins[
+                            (inv_ins["tipo"]=="COMPRA")
+                            & (inv_ins["paid"]==False)
+                            & (inv_ins["due_date"].dt.year==anio_actual)
+                            & (inv_ins["due_date"].dt.month==mes_actual)
+                        ]["amount"].sum())
+                    except Exception:
+                        to_pay_month = 0.0
+
+                    st.metric("A pagar este mes (impago)", f"${to_pay_month:,.2f}")
                     st.write(f"**Ganancia acumulada del inversor (18%)**: ${inv_ganancia:,.2f}")
+
                 st.divider()
                 c1, c2, c3 = st.columns(3)
                 c1.metric("Pagado a inversores", f"${total_pagado_inv:,.2f}")
                 c2.metric("Por pagar a inversores", f"${total_por_pagar_inv:,.2f}")
                 c3.metric("Ganancia de inversores (18%)", f"${ganancia_inversores:,.2f}")
+
                 gan_gonza  = _ganancia_inv_para("GONZA")
                 gan_martin = _ganancia_inv_para("MARTIN")
                 gan_tobias = _ganancia_inv_para("TOBIAS (YO)")

@@ -2623,15 +2623,6 @@ if is_admin_user:
                             .reindex(columns=meses, fill_value=0.0) # asegurar todos los meses
                             .fillna(0.0)
                         )
-
-                        # Totales por inversor y fila total general
-                        tabla["TOTAL inversor"] = tabla.sum(axis=1)
-                        total_row = pd.DataFrame(tabla.sum(numeric_only=True)).T
-                        total_row.index = ["TOTAL general"]
-                        tabla = pd.concat([tabla, total_row], axis=0)
-
-                        # Etiquetas de columnas tipo 'YYYY-MM'
-                        tabla.columns = [c.strftime("%Y-%m") if hasattr(c, "strftime") else c for c in tabla.columns]
                         MESES_ES = ["ENERO","FEBRERO","MARZO","ABRIL","MAYO","JUNIO",
                                     "JULIO","AGOSTO","SEPTIEMBRE","OCTUBRE","NOVIEMBRE","DICIEMBRE"]
 
@@ -2647,6 +2638,15 @@ if is_admin_user:
                                 return col
 
                         tabla.columns = [_fmt_period_es(c) for c in tabla.columns]
+                        # Totales por inversor y fila total general
+                        tabla["TOTAL inversor"] = tabla.sum(axis=1)
+                        total_row = pd.DataFrame(tabla.sum(numeric_only=True)).T
+                        total_row.index = ["TOTAL general"]
+                        tabla = pd.concat([tabla, total_row], axis=0)
+
+                        # Etiquetas de columnas tipo 'YYYY-MM'
+                        tabla.columns = [c.strftime("%Y-%m") if hasattr(c, "strftime") else c for c in tabla.columns]
+                        
                         # Formato $
                         tabla_fmt = tabla.applymap(lambda x: f"${x:,.2f}")
 

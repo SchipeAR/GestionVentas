@@ -1515,7 +1515,7 @@ if is_admin_user:
                 # 2+ cuotas: Toto => venta - purchase_price ; otros => venta - purchase_price - comisión
                 return (venta - compra) if es_toto else (venta - compra - comision)
 
-        df_m["gan_vendor"] = df_m.apply(_gan_vendor_por_op, axis=1)
+        df_m["gan_vendor"] = df_m.apply(_gan_vendor_por_op, axis=1).astype(float)
 
         # ---------- Desgloses ----------
         mask_vend_toto = df_m["vendedor"].fillna("").str.upper() == TOTO_VENDOR_NAME.upper()

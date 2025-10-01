@@ -18,6 +18,7 @@ import re
 import io
 import streamlit.components.v1 as components
 from urllib.parse import urlparse
+QP_DISABLED = any(k.startswith("_x_tr") for k in st.query_params.keys()) or (st.query_params.get("noqp") == "1")
 
 GH_REPO        = st.secrets["GH_REPO"]                         # ej: "tuusuario/tu-repo"
 GH_BRANCH      = st.secrets.get("GH_BRANCH", "main")
@@ -40,6 +41,7 @@ def qp_get(key, default=None):
         return val[0] if val else default
     return val
 
+
 def qp_set(**kwargs):
     """Setea varios query params de una."""
     # convertimos todo a str por prolijidad
@@ -48,6 +50,43 @@ def qp_set(**kwargs):
 def qp_clear():
     """Borra todos los query params."""
     st.query_params.clear()
+
+def get_current_selid() -> int | None:
+    """Lee el ID seleccionado desde la URL o session_state (modo seguro)."""
+    if not QP_DISABLED:
+        raw = st.query_params.get("selid")
+        if isinstance(raw, list):
+            raw = raw[0] if raw else None
+        try:
+            return int(raw) if raw is not None else None
+        except Exception:
+            return None
+    # modo seguro: session_state
+    try:
+        return int(st.session_state.get("selid")) if st.session_state.get("selid") is not None else None
+    except Exception:
+        return None
+
+def _set_selid(new_selid: int):
+    """Setea el ID a gestionar sin navegar a otra página."""
+    if not QP_DISABLED:
+        st.query_params.update(selid=str(new_selid))
+        st.rerun()
+    else:
+        st.session_state["selid"] = int(new_selid)
+        st.rerun()
+
+def _clear_selid():
+    """Limpia la selección actual."""
+    if not QP_DISABLED:
+        qp = st.query_params
+        if "selid" in qp:
+            del qp["selid"]
+            st.query_params.update(qp)
+            st.rerun()
+    else:
+        st.session_state.pop("selid", None)
+        st.rerun()
 
 def _pub_cfg():
     url = f"https://api.github.com/repos/{GH_REPO}/contents/{GH_PUBLIC_PATH}"
@@ -1911,13 +1950,7 @@ with tab_listar:
             if key_prefix == "uno":
                 df_ops = df_ops[df_ops["Tipo"] != "COMPRA"].reset_index(drop=True)
             editor_key = f"{key_prefix}_listado_editor"
-            sel_param = qp_get("selid")
-            if isinstance(sel_param, list):
-                sel_param = sel_param[0] if sel_param else None
-            try:
-                current_selid = int(sel_param) if sel_param else None
-            except Exception:
-                current_selid = None
+            current_selid = get_current_selid()
 
             # 2) Si cambió el selid respecto al último render, limpiar el estado del editor
             last_selid = st.session_state.get(f"{editor_key}__last_selid")
@@ -3827,10 +3860,10 @@ with tab_cal:
                             new_selid = int(marked["ID venta"].iloc[0])
 
                     # si hay un nuevo seleccionado distinto del anterior, persistimos y rerun
-                    if new_selid is not None and new_selid != prev_selid:
-                        st.session_state["cal_selid"] = new_selid
-                        st.query_params.update(selid=str(new_selid))   # soft update, no navega
-                        st.rerun()
+                    if new_selid is not None and new_selid != current_selid:
+                        _set_selid(int(new_selid))
+                    elif new_selid is None and current_selid is not None:
+                        _clear_selid()
 
             # ================== /CALENDARIO BONITO ==================
 

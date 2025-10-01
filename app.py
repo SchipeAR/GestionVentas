@@ -1,4 +1,62 @@
 import streamlit as st
+
+# ---------- URL/State helpers para selid (anti-loop) ----------
+QP_DISABLED = any(k.startswith("_x_tr") for k in st.query_params.keys()) or (st.query_params.get("noqp") == "1")
+
+def qp_get(key, default=None):
+    val = st.query_params.get(key, default)
+    if isinstance(val, list):
+        return val[0] if val else default
+    return val
+
+def qp_set(**kwargs):
+    if QP_DISABLED:
+        for k, v in kwargs.items():
+            st.session_state[k] = v
+        return
+    curr = dict(st.query_params)
+    wanted = {k: ("" if v is None else str(v)) for k, v in kwargs.items()}
+    if any(curr.get(k) != wanted[k] for k in wanted.keys()):
+        newqp = {**curr, **wanted}
+        st.query_params.update(newqp)
+
+def get_current_selid():
+    if not QP_DISABLED:
+        raw = st.query_params.get("selid")
+        if isinstance(raw, list):
+            raw = raw[0] if raw else None
+        try:
+            return int(raw) if raw is not None else None
+        except Exception:
+            return None
+    try:
+        return int(st.session_state.get("selid")) if st.session_state.get("selid") is not None else None
+    except Exception:
+        return None
+
+def _set_selid(new_selid: int):
+    if not QP_DISABLED:
+        if st.query_params.get("selid") != str(new_selid):
+            _set_selid(int(new_selid))
+            st.rerun()
+    else:
+        if st.session_state.get("selid") != int(new_selid):
+            st.session_state["selid"] = int(new_selid)
+            st.rerun()
+
+def _clear_selid():
+    if not QP_DISABLED:
+        qp = dict(st.query_params)
+        if "selid" in qp:
+            qp.pop("selid", None)
+            st.query_params.update(qp)
+            st.rerun()
+    else:
+        if "selid" in st.session_state:
+            st.session_state.pop("selid")
+            st.rerun()
+# ---------------------------------------------------------------
+
 import sqlite3
 from datetime import datetime, date
 import pandas as pd
@@ -47,6 +105,13 @@ GH_PUBLIC_PATH = st.secrets.get("GH_PUBLIC_PATH", "public/latest_stock.csv")
 GH_TOKEN       = st.secrets["GH_TOKEN"]
 
 st.set_page_config(layout="wide")
+
+try:
+    import datetime as _dt
+    st.caption(f"↻ {_dt.datetime.now():%Y-%m-%d %H:%M:%S} · QP_DISABLED={QP_DISABLED}")
+except Exception:
+    pass
+
 group_esim_sim = st.session_state.get("group_esim_sim", True)
 show_full      = st.session_state.get("show_full", False)
 margin_usd     = st.session_state.get("margin_usd", 30.0)
@@ -91,7 +156,7 @@ def get_current_selid() -> int | None:
 def _set_selid(new_selid: int):
     """Setea el ID a gestionar sin navegar a otra página."""
     if not QP_DISABLED:
-        st.query_params.update(selid=str(new_selid))
+        _set_selid(int(new_selid))
         st.rerun()
     else:
         st.session_state["selid"] = int(new_selid)
@@ -2066,7 +2131,7 @@ with tab_listar:
                     if new_checked:
                         new_selid = int(new_checked[-1])  # el/los nuevos; tomamos el último
                         if str(new_selid) != (current_sel or ""):
-                            st.query_params.update(selid=str(new_selid))
+                            _set_selid(int(new_selid))
                             st.session_state.pop(editor_key, None)  # limpia checks anteriores
                             # actualizar tracking para el próximo render
                             st.session_state[f"{editor_key}__true_ids"] = {new_selid}

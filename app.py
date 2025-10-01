@@ -2599,7 +2599,14 @@ if is_admin_user:
                     # due_date a datetime y columna de período (YYYY-MM)
                     dfc["due_date"] = pd.to_datetime(dfc["due_date"], errors="coerce")
                     dfc = dfc.dropna(subset=["due_date"])
-                    start = pd.Timestamp(int(inv_year), int(inv_month), 1)
+                    try:
+                        base_year = int(inv_year)      # si ya venís usando estos nombres arriba
+                        base_month = int(inv_month)
+                    except NameError:
+                        base_year = int(st.session_state.get("inv_mes_year", date.today().year))
+                        base_month = int(st.session_state.get("inv_mes_month", date.today().month))
+
+                    start = pd.Timestamp(base_year, base_month, 1)
                     # Rango de meses: desde start, N-1 meses hacia delante
                     periods = int(meses_horizonte)
                     meses = pd.period_range(start=start, periods=periods, freq="M")

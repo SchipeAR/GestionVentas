@@ -2632,7 +2632,21 @@ if is_admin_user:
 
                         # Etiquetas de columnas tipo 'YYYY-MM'
                         tabla.columns = [c.strftime("%Y-%m") if hasattr(c, "strftime") else c for c in tabla.columns]
+                        MESES_ES = ["ENERO","FEBRERO","MARZO","ABRIL","MAYO","JUNIO",
+                                    "JULIO","AGOSTO","SEPTIEMBRE","OCTUBRE","NOVIEMBRE","DICIEMBRE"]
 
+                        def _fmt_period_es(col):
+                            # col puede ser pd.Period('2025-10'), un timestamp o la cadena "TOTAL inversor"
+                            try:
+                                # pd.Period -> tiene .year y .month
+                                y = int(col.year)
+                                m = int(col.month)
+                                return f"{MESES_ES[m-1]} {y}"
+                            except Exception:
+                                # si no es periodo (ej. "TOTAL inversor"), lo dejamos igual
+                                return col
+
+                        tabla.columns = [_fmt_period_es(c) for c in tabla.columns]
                         # Formato $
                         tabla_fmt = tabla.applymap(lambda x: f"${x:,.2f}")
 

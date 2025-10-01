@@ -1483,7 +1483,7 @@ if is_admin_user:
         if df.empty:
             st.info("No hay datos todavía.")
     # (evitado) no cortar el render por df vacío
-    pass
+            pass
 
         # asegurar dtype datetime y filtrar mes
         df["mes"] = pd.to_datetime(df["mes"], errors="coerce")
@@ -1492,7 +1492,7 @@ if is_admin_user:
         if df_m.empty:
             st.info(f"Sin datos para {mes:02d}/{anio}.")
     # (evitado) no cortar el render por df vacío
-    pass
+            pass
 
         # ---------- 18% de TOTO inversor (del mes) ----------
         mask_inv_toto = df_m["inversor"].fillna("").str.upper() == TOTO_INV_NAME.upper()
@@ -1753,7 +1753,7 @@ with tab_listar:
             if not ops:
                 st.info("No hay ventas registradas en este grupo.")
     # (evitado)
-    pass
+                pass
 
             rows = []
             def calc_ganancia_neta(venta_total: float, purchase_price: float,

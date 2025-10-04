@@ -2868,10 +2868,10 @@ if is_admin_user:
                         except Exception as e:
                             st.error("No se pudo preparar/exportar la tabla multimes con el sistema existente.")
                             st.exception(e)
-                hoja_nombre = f"Inversores_{base_year}_{base_month:02d}_{meses_horizonte}m"  # mismo nombre que uses al exportar
+                ws_name = "inv_multimes_export"  # ← usa el nombre REAL de la pestaña que crea tu exportador
 
                 if st.button("🎨 Aplicar formato (opcional)", key="btn_format_inv_multimes"):
-                    formatear_hoja_backup(hoja_nombre)
+                    formatear_hoja_backup(ws_name)
 
                 st.divider()
                 c1, c2, c3 = st.columns(3)

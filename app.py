@@ -2576,84 +2576,98 @@ if is_admin_user:
                     return float((inv_ops["costo_neto"] * 0.18).sum())
                 
                 hoy = _date.today()
-                st.subheader("Resumen por inversor — próximos meses (TOTAL)")
+                st.subheader("Resumen por inversor — próximos meses (Total / Pagado / A pagar)")
 
-                meses_horizonte = st.slider("Meses a mostrar (desde el mes base)", 1, 12, 6, key="inv_meses_horizonte_total")
+                meses_horizonte = st.slider(
+                    "Meses a mostrar (desde el mes base)", 1, 12, 6, key="inv_meses_horizonte_mix"
+                )
 
                 from datetime import date
                 import pandas as pd
+                import numpy as np
 
-                # Año/mes base (usa los que tengas arriba; si no existen, toma actuales o session_state)
+                # Año/mes base (usa lo que ya tengas; si no existe, toma de session_state o actual)
                 try:
-                    base_year = int(inv_year)
+                    base_year  = int(inv_year)
                     base_month = int(inv_month)
                 except NameError:
-                    base_year = int(st.session_state.get("inv_mes_year", date.today().year))
+                    base_year  = int(st.session_state.get("inv_mes_year",  date.today().year))
                     base_month = int(st.session_state.get("inv_mes_month", date.today().month))
 
-                start = pd.Timestamp(base_year, base_month, 1)
+                start   = pd.Timestamp(base_year, base_month, 1)
                 periods = int(meses_horizonte)
-                meses = pd.period_range(start=start, periods=periods, freq="M")
+                meses   = pd.period_range(start=start, periods=periods, freq="M")
+
+                MESES_ES = ["ENERO","FEBRERO","MARZO","ABRIL","MAYO","JUNIO",
+                            "JULIO","AGOSTO","SEPTIEMBRE","OCTUBRE","NOVIEMBRE","DICIEMBRE"]
+                def fmt_period_es(p: pd.Period) -> str:
+                    return f"{MESES_ES[p.month-1]} {p.year}"
 
                 dfc = ins_df.copy()
                 if not dfc.empty:
                     # Solo COMPRA (pago a inversores)
                     dfc = dfc[dfc["tipo"].astype(str).str.upper().eq("COMPRA")].copy()
                     dfc["inversor"] = dfc["inversor"].fillna("").astype(str).str.upper()
-                    # Si tenés filtro de inversor arriba (inv_sel), lo respetamos:
+
+                    # Respetar filtro de inversor si está en la UI
                     if 'inv_sel' in locals() and inv_sel and inv_sel != "Todos":
                         dfc = dfc[dfc["inversor"].eq(inv_sel.strip().upper())]
 
-                    # Normalizar fechas y crear periodo YYYY-MM
+                    # Normalizar fechas y crear período
                     dfc["due_date"] = pd.to_datetime(dfc["due_date"], errors="coerce")
                     dfc = dfc.dropna(subset=["due_date"])
                     dfc["ym"] = dfc["due_date"].dt.to_period("M")
 
-                    # Filtrar al rango de meses
+                    # Filtrar rango
                     dfc = dfc[dfc["ym"].isin(meses)].copy()
 
                     if dfc.empty:
                         st.info("No hay cuotas de COMPRA en el rango elegido.")
                     else:
-                        # TOTAL por mes (Impago+Pagado)
-                        tabla = (
-                            dfc.groupby(["inversor", "ym"])["amount"]
-                            .sum()
-                            .unstack("ym")                          # columnas por mes
-                            .reindex(columns=meses, fill_value=0.0) # asegurar todos los meses
-                            .fillna(0.0)
+                        # Pivot con estado pagado/impago por mes
+                        # paid=True -> "Pagado", paid=False -> "A pagar"
+                        dfc["estado"] = np.where(dfc["paid"].astype(bool), "Pagado", "A pagar")
+
+                        piv = pd.pivot_table(
+                            dfc,
+                            index="inversor",
+                            columns=["ym", "estado"],
+                            values="amount",
+                            aggfunc="sum",
+                            fill_value=0.0,
                         )
-                        MESES_ES = ["ENERO","FEBRERO","MARZO","ABRIL","MAYO","JUNIO",
-                                    "JULIO","AGOSTO","SEPTIEMBRE","OCTUBRE","NOVIEMBRE","DICIEMBRE"]
 
-                        def _fmt_period_es(col):
-                            # col puede ser pd.Period('2025-10'), un timestamp o la cadena "TOTAL inversor"
-                            try:
-                                # pd.Period -> tiene .year y .month
-                                y = int(col.year)
-                                m = int(col.month)
-                                return f"{MESES_ES[m-1]} {y}"
-                            except Exception:
-                                # si no es periodo (ej. "TOTAL inversor"), lo dejamos igual
-                                return col
+                        # Asegurar todas las combinaciones (mes, estado)
+                        col_idx = pd.MultiIndex.from_product([meses, ["Pagado", "A pagar"]])
+                        piv = piv.reindex(columns=col_idx, fill_value=0.0)
 
-                        tabla.columns = [_fmt_period_es(c) for c in tabla.columns]
+                        # Construimos salida con columnas: MES(total), Pagado, A pagar, … por cada mes
+                        out = pd.DataFrame(index=piv.index)
+                        for p in meses:
+                            total_col  = f"{fmt_period_es(p)}"
+                            pagado_col = f"{fmt_period_es(p)} — PAGADO"
+                            ap_col     = f"{fmt_period_es(p)} — A PAGAR"
+
+                            pagado = piv[(p, "Pagado")]
+                            apagar = piv[(p, "A pagar")]
+                            total  = pagado + apagar
+
+                            out[total_col]  = total
+                            out[pagado_col] = pagado
+                            out[ap_col]     = apagar
+
                         # Totales por inversor y fila total general
-                        tabla["TOTAL inversor"] = tabla.sum(axis=1)
-                        total_row = pd.DataFrame(tabla.sum(numeric_only=True)).T
+                        out["TOTAL inversor"] = out.sum(axis=1)
+                        total_row = pd.DataFrame(out.sum(numeric_only=True)).T
                         total_row.index = ["TOTAL general"]
-                        tabla = pd.concat([tabla, total_row], axis=0)
+                        out = pd.concat([out, total_row], axis=0)
 
-                        # Etiquetas de columnas tipo 'YYYY-MM'
-                        tabla.columns = [c.strftime("%Y-%m") if hasattr(c, "strftime") else c for c in tabla.columns]
-                        
                         # Formato $
-                        tabla_fmt = tabla.applymap(lambda x: f"${x:,.2f}")
+                        out_fmt = out.applymap(lambda x: f"${x:,.2f}")
 
-                        st.dataframe(tabla_fmt, use_container_width=True, hide_index=False)
+                        st.dataframe(out_fmt, use_container_width=True, hide_index=False)
                 else:
                     st.info("No hay datos de cuotas para proyectar.")
-                # ================= /PROYECCIÓN MULTIMES POR INVERSOR — TOTAL =================
                 # ===================== Cuotas a inversores por MES =====================
                 st.divider()
                 st.subheader("💸 Cuotas a inversores por mes")

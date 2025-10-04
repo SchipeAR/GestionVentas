@@ -1274,8 +1274,19 @@ def calcular_precio_compra(costo_neto: float, inversor: str, inv_pct: float | No
 
 # Comisión = 40% de (Venta - (Costo_neto * 1.25))
 COMISION_PCT = 0.40
-def calc_comision_auto(venta: float, costo_neto: float) -> float:
-    base = float(costo_neto or 0.0) * 1.25
+
+def calc_comision_auto(
+    venta: float,
+    costo_neto: float | None = None,
+    purchase_price: float | None = None,
+) -> float:
+    """
+    Comisión = COMISION_PCT * max(venta - base, 0)
+    base = (purchase_price * 1.25) si está disponible; si no, (costo_neto * 1.25).
+    Así la comisión siempre incluye el 18% del inversor.
+    """
+    base_cost = purchase_price if purchase_price is not None else costo_neto
+    base = float(base_cost or 0.0) * 1.25
     margen = float(venta or 0.0) - base
     if margen <= 0:
         return 0.0
@@ -1773,7 +1784,7 @@ if is_admin_user:
 
 
                     precio_compra = calcular_precio_compra(costo, inversor, inv_pct_effective / 100.0)
-                    comision_auto = calc_comision_auto(venta, costo)
+                    comision_auto = calc_comision_auto(venta, costo, purchase_price=precio_compra)
                     ganancia_neta = (venta - precio_compra) - comision_auto
 
                     # 4) leyenda
@@ -1793,7 +1804,7 @@ if is_admin_user:
                             st.error("Elegí un vendedor antes de guardar.")
                         inv_pct_effective = 0.0 if int(cuotas or 0) == 1 else float(inv_pct_ui)
                         precio_compra = calcular_precio_compra(costo, inversor, inv_pct_effective / 100.0)
-                        comision_auto = calc_comision_auto(venta, costo)
+                        comision_auto = calc_comision_auto(venta, costo, purchase_price=precio_compra)
                         
                         op = {
                                 "tipo": "VENTA",
@@ -2428,7 +2439,7 @@ with tab_listar:
                         inv_pct_effective = 0.0 if int(new_cuotas or 0) == 1 else float(inv_pct_edit)
 
                         new_price = calcular_precio_compra(new_costo, new_inversor, inv_pct_effective / 100.0)
-                        new_comision_auto = calc_comision_auto(new_venta, new_costo)
+                        new_comision_auto = calc_comision_auto(new_venta, new_costo, purchase_price=new_price)
                         new_ganancia_neta = (new_venta - new_price) - new_comision_auto
 
                         st.caption(

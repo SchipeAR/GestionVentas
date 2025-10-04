@@ -3115,6 +3115,7 @@ if is_admin_user:
 
 
     with tab_admin:
+
         with card("Vendedores", "🧑‍💼"):
 
             # === Alta de vendedor ===
@@ -3360,6 +3361,59 @@ if is_admin_user:
             with st.expander("🔍 Logs de exportación (persisten en la sesión)"):
                 for line in st.session_state.export_logs[-200:]:
                     st.text(line)
+        with st.expander("🧮 Recalcular comisiones históricas", expanded=False):
+            st.caption("Recalcula la columna 'comision' de TODAS las ventas con la lógica vigente.")
+
+            if not is_admin():
+                st.info("Solo un administrador puede ejecutar esta acción.")
+            else:
+                if st.button("Recalcular ahora (con backup)", type="primary"):
+                    try:
+                        # 1) Backup antes de tocar nada (si ya tenés esta función)
+                        try:
+                            url = backup_snapshot_to_github()
+                            if url:
+                                st.success("Backup subido a GitHub ✅")
+                                st.markdown(f"[Ver commit →]({url})")
+                        except Exception as e:
+                            st.warning(f"No se pudo subir backup: {e}")
+
+                        # 2) Recalcular
+                        ops_all = list_operations(user_scope_filters({})) or []
+                        total = len(ops_all)
+                        cambios = 0
+
+                        prog = st.progress(0, text="Procesando…")
+                        for i, op in enumerate(ops_all, start=1):
+                            venta   = float(op.get("N") or 0.0)
+                            costo   = float(op.get("L") or 0.0)
+                            cuotas  = int(op.get("O") or 0)
+                            pprice  = op.get("purchase_price")
+                            pprice  = float(pprice) if pprice is not None else None
+
+                            # Regla: si es 1 pago → usar costo (como venías haciendo).
+                            # Si es 2+ pagos → usar purchase_price (incluye el 18%).
+                            if cuotas == 1:
+                                nueva = calc_comision_auto(venta=venta, costo_neto=costo, purchase_price=None)
+                            else:
+                                nueva = calc_comision_auto(venta=venta, costo_neto=costo, purchase_price=pprice)
+
+                            vieja = float(op.get("comision") or 0.0)
+                            if abs(nueva - vieja) > 0.009:  # si realmente cambió
+                                op["comision"] = float(nueva)
+                                upsert_operation(op)
+                                cambios += 1
+
+                            if i % 20 == 0 or i == total:
+                                prog.progress(i/total, text=f"Procesando… {i}/{total}")
+
+                        prog.empty()
+                        st.success(f"Listo. Comisiones actualizadas en {cambios} de {total} ventas.")
+
+                    except Exception as e:
+                        st.error("Falló la actualización de comisiones.")
+                        st.exception(e)
+        # ================== /Recalcular comisiones (histórico) ==================
         with card("Rescate: ventas ocultas (0 cuotas)", "🧰"):
             ops_zero = get_ops_zero_cuotas()
             if not ops_zero:

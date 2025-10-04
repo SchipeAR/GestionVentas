@@ -2807,6 +2807,31 @@ if is_admin_user:
 
                     st.metric("A pagar este mes (impago)", f"${to_pay_month:,.2f}")
                     st.write(f"**Ganancia acumulada del inversor (18%)**: ${inv_ganancia:,.2f}")
+                st.divider()
+                c_exp1, c_exp2 = st.columns([1, 3])
+
+                with c_exp1:
+                    if st.button("📤 Preparar y exportar a Sheets (usar sistema existente)", key="btn_export_inv_multimes_existente"):
+                        try:
+                            # 1) Preparamos un DF numérico y "planito" (sin $), con índice como columna
+                            df_export = out.copy().reset_index()  # 'out' es la tabla numérica (NO usar out_fmt)
+
+                            # 2) Guardamos en SQLite como tabla dedicada para que tu WebApp la levante
+                            #    Usamos un nombre estable y claro:
+                            with sqlite3.connect(DB_PATH) as con:
+                                df_export.to_sql("inv_multimes_export", con, if_exists="replace", index=False)
+
+                            st.success("Tabla 'inv_multimes_export' guardada en SQLite ✅")
+
+                            # 3) Llamamos a TU exportador existente (mismo botón que usás en Administración)
+                            exportar_a_sheets_webapp_desde_sqlite(DB_PATH)
+
+                        except Exception as e:
+                            st.error("No se pudo preparar/exportar la tabla multimes con el sistema existente.")
+                            st.exception(e)
+
+                with c_exp2:
+                    st.caption("Esto usa exactamente tu flujo actual: primero guarda la tabla en la base (`inv_multimes_export`) y luego llama al exportador que envía la DB a la Web App de Google Sheets.")
 
                 st.divider()
                 c1, c2, c3 = st.columns(3)

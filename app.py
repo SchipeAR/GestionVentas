@@ -95,88 +95,29 @@ def _sheets_client():
 
 def formatear_hoja_backup(worksheet_title: str):
     """
-    Post-formatea la hoja 'worksheet_title' del spreadsheet de backup:
-    - Fila 1 congelada
-    - Encabezado en negrita, fondo gris suave, centrado
-    - Anchos de columnas generosos
-    - Formato numérico #,##0.00 para columnas de montos detectadas
+    Intenta solicitar formateo a la WebApp existente (si la soporta).
+    No falla si no existe esa acción en tu Apps Script.
     """
-    ss_id = st.secrets["SHEETS_BACKUP_SPREADSHEET_ID"]
-    gc = _sheets_client()
-    sh = gc.open_by_key(ss_id)
+    url   = st.secrets.get("GS_WEBAPP_URL", "")
+    token = st.secrets.get("GS_WEBAPP_TOKEN", "")
+    if not url or not token:
+        st.info("No hay GS_WEBAPP_URL / GS_WEBAPP_TOKEN en Secrets. Se omite el formateo.")
+        return
 
     try:
-        ws = sh.worksheet(worksheet_title)
-    except gspread.WorksheetNotFound:
-        st.warning(f"No se encontró la hoja '{worksheet_title}' en el backup.")
-        return
-
-    # Congelar fila 1 (encabezado)
-    set_frozen(ws, rows=1, cols=0)
-
-    # Obtener valores para detectar columnas
-    values = ws.get_all_values()
-    if not values:
-        return
-    header = values[0]
-    ncols = len(header)
-    nrows = len(values)
-
-    # 1) Encabezado: negrita, fondo gris claro
-    header_fmt = CellFormat(
-        textFormat=TextFormat(bold=True),
-        backgroundColor=Color(0.93, 0.93, 0.93),
-    )
-    format_cell_range(ws, f"A1:{gspread.utils.rowcol_to_a1(1, ncols)}", header_fmt)
-
-    # 2) Anchos de columnas (generosos y legibles)
-    #    - Index/primera col: 220
-    #    - Columnas de mes: 200
-    #    - Pagado / A PAGAR: 140
-    #    - Por defecto: 160
-    widths = []
-    for j, name in enumerate(header, start=1):
-        name_up = (name or "").upper()
-        if j == 1:
-            w = 220
-        elif "PAGADO" in name_up or "A PAGAR" in name_up:
-            w = 140
-        elif any(m in name_up for m in ["ENERO", "FEBRERO", "MARZO", "ABRIL", "MAYO", "JUNIO",
-                                        "JULIO", "AGOSTO", "SEPTIEMBRE", "OCTUBRE", "NOVIEMBRE", "DICIEMBRE"]):
-            w = 200
+        payload = {
+            "token": token,
+            "action": "format_sheet",    # <- si tu WebApp no lo soporta, no pasa nada.
+            "worksheet": worksheet_title
+        }
+        r = requests.post(url, json=payload, timeout=30)
+        if r.status_code == 200:
+            st.success("Se solicitó el formateo a la WebApp ✅")
         else:
-            w = 160
-        widths.append((j, j, w))
-    set_column_widths(ws, widths)
-
-    # 3) Formato numérico #,##0.00 para columnas de montos (detectamos por contenido)
-    money_cols = []
-    # testeamos hasta 200 filas (o lo que haya)
-    probe_rows = min(nrows, 200)
-    for j in range(1, ncols+1):
-        is_numeric_col = False
-        for i in range(2, probe_rows+1):  # salteamos header
-            val = values[i-1][j-1] if j-1 < len(values[i-1]) else ""
-            if val is None or val == "":
-                continue
-            try:
-                float(val.replace(",", "").replace("$", "").replace(" ", ""))
-                is_numeric_col = True
-                break
-            except Exception:
-                pass
-        if is_numeric_col:
-            money_cols.append(j)
-
-    if money_cols:
-        num_fmt = CellFormat(numberFormat=NumberFormat(type="NUMBER", pattern="#,##0.00"))
-        for j in money_cols:
-            col_a1 = gspread.utils.rowcol_to_a1(1, j).rstrip("1")  # "A"
-            rng = f"{col_a1}2:{col_a1}{nrows}"
-            format_cell_range(ws, rng, num_fmt)
-
-    st.success(f"Formato aplicado a '{worksheet_title}' ✅")
-# ====== /Formateo de Google Sheets ======
+            st.info(f"La WebApp respondió {r.status_code}. Puede que no soporte 'format_sheet'.")
+    except Exception as e:
+        st.info(f"No se pudo contactar a la WebApp para formateo opcional: {e}")
+# ====== /Formato opcional vía WebApp ======
 @contextmanager
 def safe_tab(nombre: str):
     """Muestra cualquier excepción de la sección en pantalla en vez de 'pantalla vacía'."""
@@ -2927,16 +2868,10 @@ if is_admin_user:
                         except Exception as e:
                             st.error("No se pudo preparar/exportar la tabla multimes con el sistema existente.")
                             st.exception(e)
-                hoja_nombre = f"Inversores_{base_year}_{base_month:02d}_{meses_horizonte}m"  # <-- mismo nombre que usás al exportar
+                hoja_nombre = f"Inversores_{base_year}_{base_month:02d}_{meses_horizonte}m"  # mismo nombre que uses al exportar
 
-                if st.button("🎨 Aplicar formato en Sheets", key="btn_format_inv_multimes"):
-                    try:
-                        formatear_hoja_backup(hoja_nombre)
-                    except Exception as e:
-                        st.error("No se pudo aplicar el formato.")
-                        st.exception(e)
-                with c_exp2:
-                    st.caption("Esto usa exactamente tu flujo actual: primero guarda la tabla en la base (`inv_multimes_export`) y luego llama al exportador que envía la DB a la Web App de Google Sheets.")
+                if st.button("🎨 Aplicar formato (opcional)", key="btn_format_inv_multimes"):
+                    formatear_hoja_backup(hoja_nombre)
 
                 st.divider()
                 c1, c2, c3 = st.columns(3)

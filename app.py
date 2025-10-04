@@ -94,30 +94,26 @@ def _sheets_client():
     return gspread.authorize(creds)
 
 def formatear_hoja_backup(worksheet_title: str):
-    """
-    Intenta solicitar formateo a la WebApp existente (si la soporta).
-    No falla si no existe esa acción en tu Apps Script.
-    """
     url   = st.secrets.get("GS_WEBAPP_URL", "")
     token = st.secrets.get("GS_WEBAPP_TOKEN", "")
     if not url or not token:
-        st.info("No hay GS_WEBAPP_URL / GS_WEBAPP_TOKEN en Secrets. Se omite el formateo.")
+        st.info("Faltan GS_WEBAPP_URL / GS_WEBAPP_TOKEN en Secrets.")
         return
 
     try:
         payload = {
             "token": token,
-            "action": "format_sheet",    # <- si tu WebApp no lo soporta, no pasa nada.
-            "worksheet": worksheet_title
+            "action": "format_sheet",
+            "worksheet": worksheet_title,
         }
         r = requests.post(url, json=payload, timeout=30)
-        if r.status_code == 200:
-            st.success("Se solicitó el formateo a la WebApp ✅")
+        st.write("Respuesta WebApp:", r.status_code, r.text)  # <-- DEBUG visible
+        if r.ok:
+            st.success("Pedido de formateo enviado ✅")
         else:
-            st.info(f"La WebApp respondió {r.status_code}. Puede que no soporte 'format_sheet'.")
+            st.error("La WebApp no aceptó el pedido de formateo.")
     except Exception as e:
-        st.info(f"No se pudo contactar a la WebApp para formateo opcional: {e}")
-# ====== /Formato opcional vía WebApp ======
+        st.error(f"No se pudo contactar a la WebApp: {e}")
 @contextmanager
 def safe_tab(nombre: str):
     """Muestra cualquier excepción de la sección en pantalla en vez de 'pantalla vacía'."""

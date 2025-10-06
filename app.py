@@ -2079,114 +2079,139 @@ with tab_listar:
                             "Ganancia": up_arrow_if_empty(""),
                         })
 
-                # ---- DataFrame y orden de columnas ----
                 df_ops = pd.DataFrame(rows)
+
+                # En la vista "uno" ocultamos COMPRA (como ya hacías)
                 if key_prefix == "uno":
                     df_ops = df_ops[df_ops["Tipo"] != "COMPRA"].reset_index(drop=True)
-                editor_key = f"{key_prefix}_listado_editor"
-                current_selid = get_current_selid()
 
-                # 2) Si cambió el selid respecto al último render, limpiar el estado del editor
-                last_selid = st.session_state.get(f"{editor_key}__last_selid")
-                if last_selid != current_selid:
-                    st.session_state.pop(editor_key, None)
-                st.session_state[f"{editor_key}__last_selid"] = current_selid
-
-                # 3) Construir "Elegir": True sólo para la VENTA seleccionada; COMPRA queda vacío
-                def _mark(tipo, idventa, curr):
-                    if tipo == "VENTA":
-                        return bool(curr and idventa == curr)
-                    return None
-
-                df_ops["Elegir"] = [_mark(t, i, current_selid) for t, i in zip(df_ops["Tipo"], df_ops["ID venta"])]
-
-                # 4) Guardar el conjunto de IDs tildados “esperado” para detectar el casillero nuevo
-                st.session_state[f"{editor_key}__true_ids"] = {current_selid} if current_selid else set()
-
-
-
+                # Orden de columnas
                 cols_order = [
                     "Elegir","ID venta","Tipo","Descripción","Cliente","Proveedor","Inversor","Vendedor","Revendedor","Costo",
                     "Precio Compra","Venta","Comisión","Comisión x cuota","Cuotas",
                     "Cuotas pendientes","Valor por cuota","$ Pagado","$ Pendiente","Estado","Fecha de cobro","Ganancia"
                 ]
-                df_ops = df_ops[cols_order]
+                # Armamos la col "Elegir" EN BLANCO por ahora (se completa más abajo con el selid real)
+                if "Elegir" not in df_ops.columns:
+                    df_ops.insert(0, "Elegir", None)
 
+                # --- helpers mínimos para query params ---
+                def _qp_get(name: str):
+                    try:
+                        v = st.query_params.get(name)
+                        if isinstance(v, list):
+                            return v[0] if v else None
+                        return v
+                    except Exception:
+                        return None
 
+                def _qp_set(name: str, value):
+                    try:
+                        d = st.query_params.to_dict()
+                    except Exception:
+                        d = {}
+                    if value is None:
+                        d.pop(name, None)
+                    else:
+                        d[name] = str(value)
+                    st.query_params.update(d)
 
-                # ---- Mostrar tabla (ocultar columnas a vendedores) ----
+                # selid actual (desde la URL)
+                _sel_raw = _qp_get("selid")
+                try:
+                    current_selid = int(_sel_raw) if _sel_raw is not None else None
+                except Exception:
+                    current_selid = None
+
+                # Marcar la columna "Elegir": sólo tilda la fila VENTA con ese ID
+                def _mark(tipo, idventa, curr):
+                    if tipo == "VENTA" and curr is not None and int(idventa) == int(curr):
+                        return True
+                    return False
+
+                df_ops["Elegir"] = [_mark(t, i, current_selid) for t, i in zip(df_ops["Tipo"], df_ops["ID venta"])]
+
+                # Aplicar orden y ocultaciones
+                df_ops = df_ops[[c for c in cols_order if c in df_ops.columns]]
+
+                # Ocultaciones “vendedor”
                 try:
                     seller_flag = bool(seller)
                 except NameError:
                     seller_flag = not is_admin()
-                if seller:
-                    cols_hide = ["Inversor","Ganancia","Costo","Precio Compra"]
-                    df_show = df_ops.drop(columns=cols_hide)
-                else:
-                    df_show = df_ops
-                
+
                 fullcols = st.toggle("Vista completa (todas las columnas)", value=False, key=f"{key_prefix}_fullcols")
-                PERSONAL_HIDE_ALWAYS = ["Proveedor", "Venta", "Costo", "Inversor", "Ganancia"]       # <-- editá a gusto
-                PERSONAL_HIDE_SOLO_UNO = ["Cuotas", "Cuotas pendientes", "Comisión x cuota", "Estado"]  # ya las ocultábamos en 'uno'
+
+                PERSONAL_HIDE_ALWAYS = ["Proveedor", "Venta", "Costo", "Inversor", "Ganancia"]
+                PERSONAL_HIDE_SOLO_UNO = ["Cuotas", "Cuotas pendientes", "Comisión x cuota", "Estado"]
                 cols_hide_base = ["Inversor", "Ganancia", "Costo", "Precio Compra"] if (seller_flag and not fullcols) else []
-                cols_hide_uno = ["Cuotas", "Cuotas pendientes", "Comisión x cuota", "Estado"] if (key_prefix == "uno" and not fullcols) else []
-                cols_personal = (PERSONAL_HIDE_ALWAYS + (PERSONAL_HIDE_SOLO_UNO if key_prefix == "uno" else [])) if not fullcols else []
-                cols_to_hide  = (cols_hide_base + cols_hide_uno + cols_personal) if not fullcols else []
+                cols_hide_uno  = ["Cuotas", "Cuotas pendientes", "Comisión x cuota", "Estado"] if (key_prefix == "uno" and not fullcols) else []
+                cols_personal  = (PERSONAL_HIDE_ALWAYS + (PERSONAL_HIDE_SOLO_UNO if key_prefix == "uno" else [])) if not fullcols else []
+                cols_to_hide   = (cols_hide_base + cols_hide_uno + cols_personal) if not fullcols else []
                 df_show = df_ops.drop(columns=cols_to_hide, errors="ignore")
-                # Config: checkbox solo en VENTA (en COMPRA queda en blanco)
+
+                # --- Clave estable del editor + reset si cambió el selid (evita loops) ---
+                editor_key = f"{key_prefix}_listado_editor"
+                last_selid = st.session_state.get(f"{editor_key}__last_selid")
+                if last_selid != current_selid:
+                    # si cambió el selid, limpiamos el estado del widget del editor para evitar que mantenga los checks viejos
+                    st.session_state.pop(editor_key, None)
+                st.session_state[f"{editor_key}__last_selid"] = current_selid
+
+                # --- Config de columnas: checkbox sólo en "Elegir", resto lectura ---
                 colcfg = {
                     "Elegir": st.column_config.CheckboxColumn(
                         label="Elegir",
-                        help="Selecciona esta VENTA",
+                        help="Seleccioná esta VENTA para gestionar",
                         default=False
                     )
                 }
-                # El resto, solo lectura
                 for col in df_show.columns:
                     if col == "Elegir":
                         continue
                     colcfg[col] = st.column_config.TextColumn(col, disabled=True)
 
+                # --- Render del editor ---
                 edited = st.data_editor(
                     df_show,
                     hide_index=True,
                     use_container_width=True,
                     num_rows="fixed",
-                    column_config={
-                        "Seleccionar": st.column_config.LinkColumn(
-                            label="Seleccionar",
-                            help="Click para gestionar este ID",
-                            display_text="Elegir"
-                        )
-                    },
-                    key=f"{key_prefix}_listado_editor",
-    )
-                # Procesar selección detectando el casillero NUEVO y sin loop infinito
+                    column_config=colcfg,
+                    key=editor_key
+                )
+
+                # --- Detectar nueva selección (enforzar selección única) ---
+                # mapeamos “Elegir” → ID venta de las filas visibles
                 try:
-                    ventas = edited[edited["Tipo"] == "VENTA"]
-                    now_true_ids = set(int(x) for x in ventas.loc[ventas["Elegir"] == True, "ID venta"])
-
-                    prev_true_ids = st.session_state.get(f"{editor_key}__true_ids", set())
-                    # IDs que se tildaron NUEVOS respecto del render anterior
-                    new_checked = list(now_true_ids - prev_true_ids)
-
-                    current_sel = st.query_params.get("selid")
-                    if isinstance(current_sel, list):
-                        current_sel = current_sel[0] if current_sel else None
-
-                    if new_checked:
-                        new_selid = int(new_checked[-1])  # el/los nuevos; tomamos el último
-                        if str(new_selid) != (current_sel or ""):
-                            _set_selid(int(new_selid))
-                            st.session_state.pop(editor_key, None)  # limpia checks anteriores
-                            # actualizar tracking para el próximo render
-                            st.session_state[f"{editor_key}__true_ids"] = {new_selid}
-                            st.rerun()
-                    else:
-                        # No hubo nuevos tildados: mantener el tracking acorde al estado visible
-                        st.session_state[f"{editor_key}__true_ids"] = now_true_ids
+                    elig_flags = edited["Elegir"].fillna(False).tolist()
+                    id_vals    = edited["ID venta"].tolist()
                 except Exception:
-                    pass
+                    elig_flags, id_vals = [], []
+
+                checked_ids = {int(i) for flag, i in zip(elig_flags, id_vals) if bool(flag) and pd.notna(i)}
+
+                # Estado “esperado” anterior (una sola selección)
+                prev_true = st.session_state.get(f"{editor_key}__true_ids", {current_selid} if current_selid else set())
+
+                new_sel = current_selid
+                if checked_ids != prev_true:
+                    if len(checked_ids) == 0:
+                        new_sel = None
+                    elif len(checked_ids) == 1:
+                        new_sel = list(checked_ids)[0]
+                    else:
+                        # Si marcaron varias, nos quedamos con la última por orden visual (abajo/arriba indistinto)
+                        # Elegimos la primera que no estaba antes; si no se puede, tomamos la mayor por estabilidad
+                        diff = checked_ids - prev_true
+                        new_sel = (list(diff)[0] if len(diff) == 1 else sorted(list(checked_ids))[-1])
+
+                    # Persistimos nueva selección única en URL y en estado
+                    _qp_set("selid", None if new_sel is None else int(new_sel))
+                    st.session_state[f"{editor_key}__true_ids"] = {new_sel} if new_sel else set()
+                else:
+                    # no cambió: mantenemos
+                    st.session_state[f"{editor_key}__true_ids"] = prev_true
 
 
                 # ---- Gestión de cuotas / detalle de venta ----

@@ -2990,6 +2990,7 @@ if is_admin_user:
         Fórmula por cuota contada: venta - compra - (comision_total/num_cuotas)
         """
         ops = list_operations(user_scope_filters({})) or []
+        ids_usd = { op["id"] for op in ops if (op.get("currency") or "USD").upper() != "ARS" }
         venta_mes = 0.0
         compra_mes = 0.0
         comision_mes = 0.0
@@ -3003,8 +3004,10 @@ if is_admin_user:
             comi_total = float(op.get("comision") or 0.0)
             comi_x = (comi_total / total_cuotas) if total_cuotas > 0 else 0.0
 
-            cuotas_v = list_installments(op["id"], is_purchase=False) or []
-            cuotas_c = list_installments(op["id"], is_purchase=True) or []
+            cuotas_v = [c for c in list_installments_for_month(..., is_purchase=False)
+                if c["operation_id"] in ids_usd]
+            cuotas_c = [c for c in list_installments_for_month(..., is_purchase=True)
+                if c["operation_id"] in ids_usd]
 
             # --- VENTA (entradas) ---
             for c in cuotas_v:
@@ -3052,7 +3055,51 @@ if is_admin_user:
 
             modo_pagadas = (modo == "Cobros registrados (pagadas)")
             meta = st.number_input("Meta mensual (opcional)", min_value=0.0, value=0.0, step=1000.0, format="%.2f", key="rg_meta")
+            ops_all = list_operations(user_scope_filters({})) or []
 
+            rows = []
+            for op in ops_all:
+                venta   = float(op.get("N") or 0.0)
+                costo   = float(op.get("L") or 0.0)
+                price   = float(op.get("purchase_price") or 0.0)
+                comis   = float(op.get("comision") or 0.0)
+                vendedor= (op.get("zona") or "").strip()
+                fecha   = parse_iso_or_today(op.get("sale_date") or op.get("created_at"))
+                moneda  = (op.get("currency") or "USD").upper()
+                cuotas  = int(op.get("O") or 0)
+
+                es_toto = vendedor.strip().upper() == "TOTO DONOFRIO"
+                gan_oper = (venta - price) if es_toto else (venta - price - comis)
+
+                rows.append({
+                    "id": op["id"],
+                    "mes": pd.to_datetime(fecha).to_period("M").to_timestamp(),
+                    "venta": venta,
+                    "costo": costo,
+                    "purchase_price": price,
+                    "comision": comis,
+                    "vendedor": vendedor,
+                    "currency": moneda,
+                    "gan_total_oper": gan_oper,
+                    "cuotas": cuotas,
+                })
+
+            df = pd.DataFrame(rows) if rows else pd.DataFrame(
+                columns=["id","mes","venta","costo","purchase_price","comision","vendedor","currency","gan_total_oper","cuotas"]
+            )
+
+            if not df.empty:
+                df["mes"] = pd.to_datetime(df["mes"], errors="coerce")
+                df["currency"] = df["currency"].fillna("USD").astype(str).str.upper()
+
+            # filtro del mes elegido (usamos los mismos controles de arriba)
+            anio = int(anio_s)
+            mes  = int(mes_s)
+            df_m = df[(df["mes"].dt.year == anio) & (df["mes"].dt.month == mes)].copy()
+
+            # SEPARACIÓN DE MONEDAS
+            df_m_usd = df_m[df_m["currency"] != "ARS"].copy()  # SOLO USD
+            df_m_ars = df_m[df_m["currency"] == "ARS"].copy()  # ARS aparte (referencia)
             gan, v_mes, c_mes, com_mes, vend_gan = calcular_sueldo_mensual(int(anio_s), int(mes_s), modo_pagadas=modo_pagadas)
 
             # ---- Gauge / marcador de sueldo ----

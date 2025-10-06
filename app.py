@@ -3244,34 +3244,52 @@ if is_admin_user:
                     "cuotas": int(op.get("O") or 0),
                     "inversor": (op.get("nombre") or "").strip(),
                     "vendedor": (op.get("zona") or "").strip(),
-                    "currency": (op.get("currency") or "USD"),
+                    "currency": (op.get("currency") or "").strip().upper(),
                 })
-            import pandas as pd
-            df = pd.DataFrame(rows)
-            df["mes"] = pd.to_datetime(df["mes"], errors="coerce")
-            df = df.dropna(subset=["mes"])
 
-            df_m_ars = df[(df["mes"].dt.year==an) & (df["mes"].dt.month==me) & (df["currency"].str.upper()=="ARS")].copy()
+            import pandas as pd
+            df = pd.DataFrame(rows) if rows else pd.DataFrame(
+                columns=["mes","venta","costo","compra","comision","cuotas","inversor","vendedor","currency"]
+            )
+            if not df.empty:
+                df["mes"] = pd.to_datetime(df["mes"], errors="coerce")
+                df["currency"] = df["currency"].fillna("").str.upper()
+
+            # usar el mismo mes/año seleccionados arriba
+            an, me = int(anio_s), int(mes_s)
+
+            df_m_ars = df[
+                (df["mes"].dt.year == an) &
+                (df["mes"].dt.month == me) &
+                (df["currency"] == "ARS")
+            ].copy()
 
             def _gan_vendor_por_op_row(r):
                 cuotas   = int(r["cuotas"] or 0)
                 vendedor = (r["vendedor"] or "").strip().upper()
                 venta, compra, costo, comision = float(r["venta"] or 0.0), float(r["compra"] or 0.0), float(r["costo"] or 0.0), float(r["comision"] or 0.0)
                 if cuotas == 1:
-                    return (venta - costo) if (vendedor=="TOTO DONOFRIO") else (venta - costo - comision)
+                    # 1 pago: base costo; si es Toto vendedor no descuenta comisión
+                    return (venta - costo) if (vendedor == "TOTO DONOFRIO") else (venta - costo - comision)
                 else:
-                    return (venta - compra) if (vendedor=="TOTO DONOFRIO") else (venta - compra - comision)
+                    # 2+ pagos: base purchase_price; si es Toto vendedor no descuenta comisión
+                    return (venta - compra) if (vendedor == "TOTO DONOFRIO") else (venta - compra - comision)
 
             if df_m_ars.empty:
-                st.info("No hay ventas ARS en el mes actual.")
+                st.info(f"No hay ventas ARS en {me:02d}/{an}.")
             else:
                 df_m_ars["gan_vendor"] = df_m_ars.apply(_gan_vendor_por_op_row, axis=1)
-                mask_inv_toto_ars = df_m_ars["inversor"].fillna("").str.upper() == TOTO_INV_NAME.upper()
-                g1_total_ars = float((df_m_ars.loc[mask_inv_toto_ars, "costo"].astype(float) * float(TOTO_INV_PCT)).sum())
+
+                mask_inv_toto_ars  = df_m_ars["inversor"].fillna("").str.upper() == TOTO_INV_NAME.upper()
                 mask_vend_toto_ars = df_m_ars["vendedor"].fillna("").str.upper() == TOTO_VENDOR_NAME.upper()
 
+                # 18% como inversor (sobre costo) solo de ARS del mes
+                g1_total_ars = float((df_m_ars.loc[mask_inv_toto_ars, "costo"].astype(float) * float(TOTO_INV_PCT)).sum())
+
+                # Toto vendedor (2+ cuotas) y en 1 pago, en ARS del mes
                 g2_total_ars = float(df_m_ars.loc[mask_vend_toto_ars & (df_m_ars["cuotas"] >= 2), "gan_vendor"].sum())
                 g3_total_ars = float(df_m_ars.loc[mask_vend_toto_ars & (df_m_ars["cuotas"] == 1), "gan_vendor"].sum())
+
                 gan_toto_vendedor_total_ars = float(df_m_ars.loc[mask_vend_toto_ars, "gan_vendor"].sum())
                 g_no_toto_ars = float(df_m_ars.loc[~mask_vend_toto_ars, "gan_vendor"].sum())
 

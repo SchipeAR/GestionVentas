@@ -2981,65 +2981,130 @@ if is_admin_user:
         base = parse_iso_or_today(op_dict.get("sale_date") or op_dict.get("created_at"))
         return add_months(base, max(int(idx) - 1, 0))
 
-    def calcular_sueldo_mensual(anio:int, mes:int, modo_pagadas:bool=False):
-        """
-        Retorna:
-        ganancia_mes, venta_mes, compra_mes, comision_mes, detalle_vendedores (dict nombre->ganancia)
-        - Proyección (modo_pagadas=False): usa VENCIMIENTO de cuotas del mes.
-        - Pagadas (modo_pagadas=True): usa FECHA DE PAGO real del mes.
-        Fórmula por cuota contada: venta - compra - (comision_total/num_cuotas)
-        """
-        ops = list_operations(user_scope_filters({})) or []
-        ids_usd = { op["id"] for op in ops if (op.get("currency") or "USD").upper() != "ARS" }
-        venta_mes = 0.0
-        compra_mes = 0.0
-        comision_mes = 0.0
-        vend_gan = {}  # acumulado por vendedor
+    def calcular_sueldo_mensual(anio: int, mes: int, modo_pagadas: bool = False):
+            """
+            Devuelve: (gan, v_mes, c_mes, com_mes, vend_gan)
+            - gan:     Ventas del mes - Compras del mes - Comisión prorrateada del mes (salvo Toto vendedor)
+            - v_mes:   Total cuotas de VENTA del mes (USD)
+            - c_mes:   Total cuotas de COMPRA del mes (USD)
+            - com_mes: Comisión prorrateada imputada en el mes (USD)
+            - vend_gan: dict por vendedor con la misma fórmula de 'gan' aplicada por operación/vendedor
+            NOTA: Excluye operaciones en ARS; sólo cuenta USD. Soporta dos modos:
+            - modo_pagadas=False → Proyección por vencimiento (usa due date estimado)
+            - modo_pagadas=True  → Cobros registrados (usa paid_at de cuotas pagadas)
+            """
+            try:
+                ops_all = list_operations(user_scope_filters({})) or []
+            except Exception:
+                ops_all = []
 
-        for op in ops:
-            vendedor = (op.get("zona") or "").strip() or "—"
-            total_cuotas = int(op.get("O") or 0)
-            if total_cuotas <= 0:
-                continue
-            comi_total = float(op.get("comision") or 0.0)
-            comi_x = (comi_total / total_cuotas) if total_cuotas > 0 else 0.0
+            # Consideramos SOLO USD (o lo que no sea ARS)
+            ids_usd = set()
+            for op in ops_all:
+                cur = (op.get("currency") or "USD").upper()
+                if cur != "ARS":
+                    ids_usd.add(int(op["id"]))
 
-            cuotas_v = [c for c in list_installments_for_month(..., is_purchase=False)
-                if c["operation_id"] in ids_usd]
-            cuotas_c = [c for c in list_installments_for_month(..., is_purchase=True)
-                if c["operation_id"] in ids_usd]
+            # Helpers de fecha de vencimiento (mensual) y filtro mensual
+            def _due_for(op, idx: int):
+                """Vencimiento mensual (base: sale_date o created_at) → add_months(base, idx-1)."""
+                base = parse_iso_or_today(op.get("sale_date") or op.get("created_at"))
+                return add_months(base, max(int(idx) - 1, 0))
 
-            # --- VENTA (entradas) ---
-            for c in cuotas_v:
-                idx = int(c["idx"])
-                amt = float(c["amount"])
-                if not modo_pagadas:
-                    due = _fecha_cuota(op, idx)
-                    cond = (due.year == anio and due.month == mes)
+            def _is_in_month(dt):
+                return (dt.year == int(anio)) and (dt.month == int(mes))
+
+            # Acumuladores
+            v_mes = 0.0   # ventas
+            c_mes = 0.0   # compras
+            com_mes = 0.0 # comisión prorrateada
+            vend_gan = {} # por vendedor
+
+            for op in ops_all:
+                op_id = int(op["id"])
+                if op_id not in ids_usd:
+                    continue  # excluir ARS
+
+                vendedor_str = (op.get("zona") or "").strip()
+                vendedor_up  = vendedor_str.upper()
+
+                total_cuotas_venta = int(op.get("O") or 0)
+                comision_total     = float(op.get("comision") or 0.0)
+                com_x_cuota        = (comision_total / total_cuotas_venta) if total_cuotas_venta > 0 else 0.0
+
+                # Cuotas de venta/compra
+                cuotas_v = list_installments(op_id, is_purchase=False) or []
+                cuotas_c = list_installments(op_id, is_purchase=True)  or []
+
+                # Sumas imputadas para esta operación en el mes
+                sum_v_op = 0.0
+                sum_c_op = 0.0
+                n_cuotas_venta_en_mes = 0  # para prorratear comisiones (solo sale)
+
+                if modo_pagadas:
+                    # Solo cuotas marcadas como pagadas con paid_at en el mes seleccionado
+                    for cv in cuotas_v:
+                        if not bool(cv.get("paid")):
+                            continue
+                        paid_at = cv.get("paid_at")
+                        if not paid_at:
+                            continue
+                        try:
+                            dtp = parse_iso_or_today(paid_at)
+                        except Exception:
+                            continue
+                        if _is_in_month(dtp):
+                            sum_v_op += float(cv.get("amount") or 0.0)
+                            n_cuotas_venta_en_mes += 1
+
+                    for cc in cuotas_c:
+                        if not bool(cc.get("paid")):
+                            continue
+                        paid_at = cc.get("paid_at")
+                        if not paid_at:
+                            continue
+                        try:
+                            dtp = parse_iso_or_today(paid_at)
+                        except Exception:
+                            continue
+                        if _is_in_month(dtp):
+                            sum_c_op += float(cc.get("amount") or 0.0)
+
                 else:
-                    paid_at = c.get("paid_at")
-                    cond = bool(c["paid"]) and paid_at and (parse_iso_or_today(paid_at).year == anio and parse_iso_or_today(paid_at).month == mes)
-                if cond:
-                    venta_mes += amt
-                    comision_mes += comi_x
-                    vend_gan[vendedor] = vend_gan.get(vendedor, 0.0) + (amt - comi_x)  # compra se descuenta más abajo
+                    # Proyección por vencimiento (estimamos due date mensual por índice)
+                    for cv in cuotas_v:
+                        try:
+                            idx = int(cv.get("idx"))
+                        except Exception:
+                            continue
+                        due = _due_for(op, idx)
+                        if _is_in_month(due):
+                            sum_v_op += float(cv.get("amount") or 0.0)
+                            n_cuotas_venta_en_mes += 1
 
-            # --- COMPRA (salidas a inversor) ---
-            for c in cuotas_c:
-                idx = int(c["idx"])
-                amt = float(c["amount"])
-                if not modo_pagadas:
-                    due = _fecha_cuota(op, idx)
-                    cond = (due.year == anio and due.month == mes)
-                else:
-                    paid_at = c.get("paid_at")
-                    cond = bool(c["paid"]) and paid_at and (parse_iso_or_today(paid_at).year == anio and parse_iso_or_today(paid_at).month == mes)
-                if cond:
-                    compra_mes += amt
-                    vend_gan[vendedor] = vend_gan.get(vendedor, 0.0) - amt
+                    for cc in cuotas_c:
+                        try:
+                            idx = int(cc.get("idx"))
+                        except Exception:
+                            continue
+                        due = _due_for(op, idx)
+                        if _is_in_month(due):
+                            sum_c_op += float(cc.get("amount") or 0.0)
 
-        ganancia = venta_mes - compra_mes - comision_mes
-        return ganancia, venta_mes, compra_mes, comision_mes, vend_gan
+                # Comisión prorrateada: NO se descuenta si el vendedor es TOTO DONOFRIO
+                com_op = 0.0 if (vendedor_up == "TOTO DONOFRIO") else (com_x_cuota * n_cuotas_venta_en_mes)
+
+                # Acumular global
+                v_mes += sum_v_op
+                c_mes += sum_c_op
+                com_mes += com_op
+
+                # Acumular por vendedor
+                vend_gan.setdefault(vendedor_str, 0.0)
+                vend_gan[vendedor_str] += (sum_v_op - sum_c_op - com_op)
+
+            gan = v_mes - c_mes - com_mes
+            return float(gan), float(v_mes), float(c_mes), float(com_mes), vend_gan
 
     with tab_reportes:  # 👈 cambialo si tu tab se llama distinto
         with card("Reportes KPI", "📈"):

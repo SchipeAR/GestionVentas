@@ -3824,6 +3824,176 @@ if is_admin_user:
                             st.error(f"No pude restaurar: {err}")
             else:
                 st.caption("Consejo: en GitHub buscá un backup cercano al momento que sabés que tenía las marcas correctas, descargalo, y probalo acá. Como hay **previsualización**, podés tantear varios sin riesgo hasta encontrar el correcto.")
+        # ====== Botón alternativo: FUSIONAR pagos del backup con la DB actual (conservar nuevos) ======
+        def _load_installments_as_df(db_path: str) -> pd.DataFrame:
+            import sqlite3
+            from contextlib import closing
+            with closing(sqlite3.connect(db_path)) as con:
+                con.row_factory = sqlite3.Row
+                cur = con.cursor()
+                cur.execute("""
+                    SELECT
+                      id, operation_id,
+                      CAST(idx AS INTEGER) AS idx,
+                      CAST(is_purchase AS INTEGER) AS is_purchase,
+                      amount,
+                      CAST(paid AS INTEGER) AS paid,
+                      paid_at
+                    FROM installments
+                """)
+                rows = [dict(r) for r in cur.fetchall()]
+            df = pd.DataFrame(rows)
+            if df.empty:
+                df = pd.DataFrame(columns=["id","operation_id","idx","is_purchase","amount","paid","paid_at"])
+            # normalizo tipos
+            for col in ["operation_id","idx","is_purchase","paid"]:
+                if col in df.columns:
+                    df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0).astype(int)
+            return df
+        
+        def _merge_paid_flags(backup_bytes: bytes, db_path_dest: str):
+            """Fusiona flags paid/paid_at por (operation_id, idx, is_purchase).
+            Reglas:
+              - paid_final = paid_actual OR paid_backup
+              - Si ambas pagadas -> usar SIEMPRE paid_at del backup
+              - Si solo backup pagada -> usar paid_at del backup
+              - Si solo actual pagada -> conservar paid_at actual
+              - No borra filas ni toca montos, solo UPDATE de paid/paid_at
+            """
+            import sqlite3, tempfile, os
+            from contextlib import closing
+            import pandas as pd
+        
+            # 1) Escribimos backup a un archivo temporal
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".db") as f:
+                f.write(backup_bytes)
+                f.flush()
+                src_path = f.name
+        
+            try:
+                # 2) Cargamos dataframes
+                df_src = _load_installments_as_df(src_path)      # del backup
+                df_dst = _load_installments_as_df(db_path_dest)  # actual
+        
+                if df_dst.empty:
+                    return False, "La DB actual no tiene installments para fusionar."
+        
+                # 3) Clave de fusión
+                KEY = ["operation_id", "idx", "is_purchase"]
+                for col in KEY:
+                    if col not in df_src.columns:
+                        df_src[col] = 0  # por si el schema del backup es más viejo
+        
+                # 4) Merge por clave (left=actual, traemos flags del backup)
+                merged = df_dst.merge(
+                    df_src[KEY + ["paid", "paid_at"]],
+                    on=KEY, how="left", suffixes=("", "_bkp")
+                )
+        
+                # 5) Resolver flags y fechas
+                def _resolve(row):
+                    p_cur = int(row.get("paid") or 0)
+                    p_bkp = int(row.get("paid_bkp") or 0)
+                    a_cur = row.get("paid_at")
+                    a_bkp = row.get("paid_at_bkp")
+        
+                    paid_final = 1 if (p_cur == 1 or p_bkp == 1) else 0
+        
+                    # Regla especial pedida:
+                    # - Si ambas pagadas -> usar SIEMPRE la fecha del backup
+                    # - Si solo backup pagada -> usar fecha del backup
+                    # - Si solo actual pagada -> usar fecha actual
+                    # - Si ninguna -> None
+                    if paid_final == 1:
+                        if p_bkp == 1 and a_bkp:      # backup pagada con fecha => gana backup
+                            paid_at_final = str(a_bkp)
+                        elif p_bkp == 1 and not a_bkp:
+                            # backup pagada sin fecha: si actual tiene, conservamos; si no, None
+                            paid_at_final = str(a_cur) if a_cur else None
+                        elif p_cur == 1:
+                            paid_at_final = str(a_cur) if a_cur else None
+                        else:
+                            paid_at_final = None
+                    else:
+                        paid_at_final = None
+        
+                    return paid_final, paid_at_final
+        
+                merged[["paid_final", "paid_at_final"]] = merged.apply(
+                    lambda r: pd.Series(_resolve(r)), axis=1
+                )
+        
+                # 6) Detectar diferencias a aplicar
+                to_update = merged[
+                    (merged["paid_final"] != merged["paid"]) |
+                    (merged["paid_at_final"].fillna("") != merged["paid_at"].fillna(""))
+                ][["id", "paid_final", "paid_at_final"]].copy()
+        
+                if to_update.empty:
+                    return True, "No hay cambios para aplicar (todo ya conciliado)."
+        
+                # 7) Aplicar updates
+                with closing(sqlite3.connect(db_path_dest)) as con:
+                    cur = con.cursor()
+                    con.execute("BEGIN")
+                    try:
+                        for _, r in to_update.iterrows():
+                            cur.execute(
+                                "UPDATE installments SET paid=?, paid_at=? WHERE id=?",
+                                (int(r["paid_final"]),
+                                 (r["paid_at_final"] if pd.notna(r["paid_at_final"]) else None),
+                                 int(r["id"]))
+                            )
+                        con.commit()
+                    except Exception as e:
+                        con.rollback()
+                        return False, f"Error aplicando updates: {e}"
+        
+                return True, f"Actualizadas {len(to_update)} cuotas."
+            finally:
+                try:
+                    os.remove(src_path)
+                except Exception:
+                    pass
+        
+        with st.expander("🤝 Fusionar pagos desde backup (conservar nuevos)", expanded=False):
+            st.caption("Usá esta opción si **registraste pagos recientemente** y no querés perderlos. Fusiona las marcas `paid` y `paid_at` del backup con tu base actual por `(operation_id, idx, is_purchase)`.")
+            up2 = st.file_uploader("Elegí un backup .db", type=["db","sqlite"], key="merge_db_uploader")
+            if up2 is not None:
+                # preview simple
+                st.write("Preview backup (últimos pagos):")
+                _tmp_preview = None
+                try:
+                    import tempfile, os, sqlite3
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=".db") as f:
+                        f.write(up2.read())
+                        f.flush()
+                        tmp_path = f.name
+                    _prev = _summarize_installments(tmp_path)
+                    st.dataframe(pd.DataFrame(_prev["ultimos"]), use_container_width=True, hide_index=True)
+                    with open(tmp_path, "rb") as fh:
+                        _tmp_preview = fh.read()
+                except Exception as e:
+                    st.error(f"No pude previsualizar el backup: {e}")
+                finally:
+                    try:
+                        os.remove(tmp_path)
+                    except Exception:
+                        pass
+        
+                if _tmp_preview:
+                    if st.button("🤝 Fusionar pagos (no borra nada)", type="primary", key="btn_merge_paid"):
+                        ok, msg = _merge_paid_flags(_tmp_preview, DB_PATH)
+                        if ok:
+                            try:
+                                recalc_all_statuses()
+                            except Exception:
+                                pass
+                            st.success(f"Listo: {msg}")
+                            st.rerun()
+                        else:
+                            st.error(msg)
+                
         # ====================== /Restaurar cuotas desde backup (.db) ======================
 if is_admin_user:
     with tab_stock:

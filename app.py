@@ -86,6 +86,7 @@ from gspread_formatting import (
     set_column_widths,
     CellFormat, TextFormat, NumberFormat, Color
 )
+from contextlib import closing
 
 def _sheets_client():
     creds_info = st.secrets["gcp_service_account"]
@@ -3668,6 +3669,162 @@ if is_admin_user:
                                 st.warning(f"No se pudo subir el backup: {e}")
                             st.success(f"Venta #{op['id']} eliminada ✅")
                             st.rerun()
+        def _summarize_installments(db_path: str):
+            """Devuelve resumen de installments de una DB dada."""
+            with closing(sqlite3.connect(db_path)) as con:
+                con.row_factory = sqlite3.Row
+                cur = con.cursor()
+                def _q(q, params=()):
+                    cur.execute(q, params)
+                    return cur.fetchall()
+        
+                # Totales
+                tot = _q("SELECT COUNT(*) AS n FROM installments")[0]["n"]
+                pag = _q("SELECT COUNT(*) AS n FROM installments WHERE paid=1")[0]["n"]
+                imp = tot - pag
+        
+                # Split por tipo
+                try:
+                    pag_v = _q("SELECT COUNT(*) AS n FROM installments WHERE paid=1 AND is_purchase=0")[0]["n"]
+                    pag_c = _q("SELECT COUNT(*) AS n FROM installments WHERE paid=1 AND is_purchase=1")[0]["n"]
+                except Exception:
+                    # por si el flag se llama distinto
+                    pag_v = _q("SELECT COUNT(*) AS n FROM installments WHERE paid=1 AND (is_purchase=0 OR is_purchase IS NULL)")[0]["n"]
+                    pag_c = pag - pag_v
+        
+                # Últimos 10 pagos registrados (para olfatear si es el backup correcto)
+                ultimos = _q("""
+                    SELECT operation_id, idx, is_purchase, amount, paid, paid_at
+                    FROM installments WHERE paid=1
+                    ORDER BY COALESCE(paid_at, '') DESC, id DESC
+                    LIMIT 10
+                """)
+        
+                # Operaciones con pagos: cuántas distintas
+                ops_pag = _q("SELECT COUNT(DISTINCT operation_id) AS k FROM installments WHERE paid=1")[0]["k"]
+        
+                return {
+                    "total": tot,
+                    "pagadas": pag,
+                    "impagas": imp,
+                    "pagadas_venta": pag_v,
+                    "pagadas_compra": pag_c,
+                    "ops_con_pagadas": ops_pag,
+                    "ultimos": [dict(r) for r in ultimos],
+                }
+        
+        def _same_schema_or_intersection(src_con, dst_con, table="installments"):
+            """Calcula columnas comunes entre tablas installments de src y dst."""
+            def _cols(cnx):
+                cnx.row_factory = sqlite3.Row
+                cur = cnx.cursor()
+                cur.execute(f"PRAGMA table_info({table})")
+                return [r["name"] for r in cur.fetchall()]
+            src_cols = _cols(src_con)
+            dst_cols = _cols(dst_con)
+            common = [c for c in dst_cols if c in src_cols]  # preserva orden de destino
+            return src_cols, dst_cols, common
+        
+        def _restore_installments_from_backup_bytes(backup_bytes: bytes, db_path_dest: str):
+            """Restaura la tabla installments desde bytes de un .db de backup, sin tocar otras tablas."""
+            # Guardar en un archivo temporal en memoria/disco
+            tmp = io.BytesIO(backup_bytes)
+            # sqlite no abre desde BytesIO directo; lo guardamos a un archivo real
+            import tempfile, os
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".db") as f:
+                f.write(tmp.getvalue())
+                f.flush()
+                src_path = f.name
+        
+            try:
+                with closing(sqlite3.connect(src_path)) as src, closing(sqlite3.connect(db_path_dest)) as dst:
+                    src.row_factory = sqlite3.Row
+                    dst.row_factory = sqlite3.Row
+        
+                    # Columnas comunes (por si hubo cambios de esquema)
+                    src_cols, dst_cols, common = _same_schema_or_intersection(src, dst, "installments")
+                    if not common:
+                        raise RuntimeError("No hay columnas comunes entre installments (backup vs. actual).")
+        
+                    cols_csv = ", ".join(common)
+        
+                    # Transacción segura
+                    with dst:
+                        dst.execute("DELETE FROM installments")
+                        dst.execute(f"INSERT INTO installments ({cols_csv}) SELECT {cols_csv} FROM main.installments", [])
+                        # Lo anterior copiaria desde la misma DB, así que hagamos ATTACH y copiamos desde src
+                    with dst:
+                        dst.execute("ATTACH DATABASE ? AS bkp", (src_path,))
+                        dst.execute("DELETE FROM main.installments")
+                        dst.execute(f"INSERT INTO main.installments ({cols_csv}) SELECT {cols_csv} FROM bkp.installments")
+                        dst.execute("DETACH DATABASE bkp")
+                return True, None
+            except Exception as e:
+                return False, str(e)
+            finally:
+                try:
+                    os.remove(src_path)
+                except Exception:
+                    pass
+        
+        with st.expander("🛠 Restaurar cuotas desde backup (.db)", expanded=False):
+            st.caption("Subí un archivo .db de tus backups. Primero te muestro un **resumen**; si coincide con lo que recordás, podés restaurar **solo** la tabla de cuotas (installments) sin tocar el resto.")
+        
+            up = st.file_uploader("Elegí un backup .db", type=["db", "sqlite"], key="restore_db_uploader")
+            if up is not None:
+                # Guardamos bytes en memoria y previsualizamos
+                data = up.read()
+                # preview: escribir a tmp para poder abrir con sqlite
+                import tempfile, os
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".db") as f:
+                    f.write(data)
+                    f.flush()
+                    tmp_path = f.name
+        
+                try:
+                    prev = _summarize_installments(tmp_path)
+                except Exception as e:
+                    st.error(f"No pude leer el backup: {e}")
+                    prev = None
+                finally:
+                    try:
+                        os.remove(tmp_path)
+                    except Exception:
+                        pass
+        
+                if prev:
+                    c1, c2, c3, c4 = st.columns(4)
+                    c1.metric("Cuotas (total)", f"{prev['total']:,}")
+                    c2.metric("Pagadas", f"{prev['pagadas']:,}")
+                    c3.metric("Impagas", f"{prev['impagas']:,}")
+                    c4.metric("Ops con pagadas", f"{prev['ops_con_pagadas']:,}")
+        
+                    c5, c6 = st.columns(2)
+                    c5.metric("Pagadas VENTA", f"{prev['pagadas_venta']:,}")
+                    c6.metric("Pagadas COMPRA", f"{prev['pagadas_compra']:,}")
+        
+                    st.markdown("**Últimos 10 pagos en el backup** (para chequear si es el correcto):")
+                    st.dataframe(
+                        pd.DataFrame(prev["ultimos"]),
+                        use_container_width=True, hide_index=True
+                    )
+        
+                    st.info("Si estos números coinciden con lo que recordás, podés restaurar **solo** la tabla `installments` desde este backup. El resto de tablas quedan intactas.")
+        
+                    if st.button("⚠️ Restaurar 'installments' desde este backup", type="primary", key="btn_restore_installments"):
+                        ok, err = _restore_installments_from_backup_bytes(data, DB_PATH)
+                        if ok:
+                            try:
+                                recalc_all_statuses()  # si tenés una función global; si no, recalc por operación
+                            except Exception:
+                                pass
+                            st.success("¡Listo! Se restauraron las cuotas desde el backup. Actualizo la vista…")
+                            st.rerun()
+                        else:
+                            st.error(f"No pude restaurar: {err}")
+            else:
+                st.caption("Consejo: en GitHub buscá un backup cercano al momento que sabés que tenía las marcas correctas, descargalo, y probalo acá. Como hay **previsualización**, podés tantear varios sin riesgo hasta encontrar el correcto.")
+        # ====================== /Restaurar cuotas desde backup (.db) ======================
 if is_admin_user:
     with tab_stock:
         with st.expander("⚙️ Opciones"):

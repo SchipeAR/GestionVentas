@@ -3856,15 +3856,15 @@ if is_admin_user:
             Reglas:
               - paid_final = paid_actual OR paid_backup
               - Si ambas pagadas -> usar SIEMPRE paid_at del backup
-              - Si solo backup pagada -> usar paid_at del backup
-              - Si solo actual pagada -> conservar paid_at actual
+              - Si solo backup pagada -> usar fecha del backup
+              - Si solo actual pagada -> usar fecha actual
               - No borra filas ni toca montos, solo UPDATE de paid/paid_at
             """
             import sqlite3, tempfile, os
             from contextlib import closing
             import pandas as pd
         
-            # 1) Escribimos backup a un archivo temporal
+            # 1) Escribimos backup a archivo temporal
             with tempfile.NamedTemporaryFile(delete=False, suffix=".db") as f:
                 f.write(backup_bytes)
                 f.flush()
@@ -3872,11 +3872,16 @@ if is_admin_user:
         
             try:
                 # 2) Cargamos dataframes
-                df_src = _load_installments_as_df(src_path)      # del backup
-                df_dst = _load_installments_as_df(db_path_dest)  # actual
+                df_src = _load_installments_as_df(src_path)      # BACKUP
+                df_dst = _load_installments_as_df(db_path_dest)  # ACTUAL
         
                 if df_dst.empty:
                     return False, "La DB actual no tiene installments para fusionar."
+        
+                # Asegurar columnas mínimas en backup
+                for col in ["paid", "paid_at"]:
+                    if col not in df_src.columns:
+                        df_src[col] = None if col == "paid_at" else 0
         
                 # 3) Clave de fusión
                 KEY = ["operation_id", "idx", "is_purchase"]
@@ -3890,25 +3895,34 @@ if is_admin_user:
                     on=KEY, how="left", suffixes=("", "_bkp")
                 )
         
-                # 5) Resolver flags y fechas
+                # Post-merge: garantizar columnas _bkp
+                if "paid_bkp" not in merged.columns:
+                    merged["paid_bkp"] = 0
+                if "paid_at_bkp" not in merged.columns:
+                    merged["paid_at_bkp"] = None
+        
+                # Normalizar tipos/na
+                merged["paid"] = pd.to_numeric(merged["paid"], errors="coerce").fillna(0).astype(int)
+                merged["paid_bkp"] = pd.to_numeric(merged["paid_bkp"], errors="coerce").fillna(0).astype(int)
+        
+                # 5) Resolver flags y fechas (accesos SIEMPRE con default)
                 def _resolve(row):
-                    p_cur = int(row.get("paid") or 0)
-                    p_bkp = int(row.get("paid_bkp") or 0)
-                    a_cur = row.get("paid_at")
-                    a_bkp = row.get("paid_at_bkp")
+                    p_cur = int(row.get("paid", 0) or 0)
+                    p_bkp = int(row.get("paid_bkp", 0) or 0)
+                    a_cur = row.get("paid_at", None)
+                    a_bkp = row.get("paid_at_bkp", None)
         
                     paid_final = 1 if (p_cur == 1 or p_bkp == 1) else 0
         
-                    # Regla especial pedida:
-                    # - Si ambas pagadas -> usar SIEMPRE la fecha del backup
-                    # - Si solo backup pagada -> usar fecha del backup
-                    # - Si solo actual pagada -> usar fecha actual
-                    # - Si ninguna -> None
+                    # Reglas pedidas:
+                    # - ambas pagadas -> usar SIEMPRE fecha del backup (si existe)
+                    # - solo backup pagada -> fecha backup
+                    # - solo actual pagada -> fecha actual
+                    # - ninguna -> None
                     if paid_final == 1:
-                        if p_bkp == 1 and a_bkp:      # backup pagada con fecha => gana backup
+                        if p_bkp == 1 and a_bkp:           # backup tiene fecha -> gana backup
                             paid_at_final = str(a_bkp)
-                        elif p_bkp == 1 and not a_bkp:
-                            # backup pagada sin fecha: si actual tiene, conservamos; si no, None
+                        elif p_bkp == 1 and not a_bkp:     # backup sin fecha
                             paid_at_final = str(a_cur) if a_cur else None
                         elif p_cur == 1:
                             paid_at_final = str(a_cur) if a_cur else None
@@ -3919,9 +3933,8 @@ if is_admin_user:
         
                     return paid_final, paid_at_final
         
-                merged[["paid_final", "paid_at_final"]] = merged.apply(
-                    lambda r: pd.Series(_resolve(r)), axis=1
-                )
+                resolved = merged.apply(lambda r: pd.Series(_resolve(r), index=["paid_final","paid_at_final"]), axis=1)
+                merged = pd.concat([merged, resolved], axis=1)
         
                 # 6) Detectar diferencias a aplicar
                 to_update = merged[

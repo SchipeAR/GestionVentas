@@ -1982,6 +1982,21 @@ with tab_listar:
                 if not ops:
                     st.info("No hay ventas registradas en este grupo.")
                     return
+                # --- Filtro por Revendedor ---
+                revendedores_all = sorted({
+                    (op.get("revendedor") or "").strip()
+                    for op in ops
+                    if (op.get("revendedor") or "").strip()
+                })
+                rev_sel = st.selectbox(
+                    "Filtro Revendedor",
+                    options=["Todos"] + revendedores_all,
+                    index=0,
+                    key=f"{key_prefix}_f_rev"
+                )
+                
+                if rev_sel != "Todos":
+                    ops = [op for op in ops if ((op.get("revendedor") or "").strip() == rev_sel)]
 
                 rows = []
                 def calc_ganancia_neta(venta_total: float, purchase_price: float,

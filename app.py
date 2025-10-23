@@ -2915,22 +2915,47 @@ if is_admin_user:
                     if st.button("📤 Preparar y exportar a Sheets (usar sistema existente)", key="btn_export_inv_multimes_existente"):
                         try:
                             # 1) Preparamos un DF numérico y "planito" (sin $), con índice como columna
-                            df_export = out.copy().reset_index()  # 'out' es la tabla numérica (NO usar out_fmt)
-
-                            # 2) Guardamos en SQLite como tabla dedicada para que tu WebApp la levante
-                            #    Usamos un nombre estable y claro:
+                            df_export = out.copy().reset_index()  # 'out' es la tabla multimes NUMÉRICA (NO out_fmt)
+                
+                            # 2) Guardamos en SQLite como tabla dedicada (opcional, lo dejo igual que antes)
                             with sqlite3.connect(DB_PATH) as con:
                                 df_export.to_sql("inv_multimes_export", con, if_exists="replace", index=False)
-
+                
                             st.success("Tabla 'inv_multimes_export' guardada en SQLite ✅")
-
-                            # 3) Llamamos a TU exportador existente (mismo botón que usás en Administración)
-                            exportar_a_sheets_webapp_desde_sqlite(DB_PATH)
-
+                
+                            # 3) Exportar usando tu Apps Script con action="write_tables"
+                            #    Armamos "values" = fila de encabezados + filas de datos
+                            header = list(df_export.columns)
+                            rows = df_export.values.tolist()
+                            values = [header] + rows
+                
+                            url = st.secrets["GS_WEBAPP_URL"]
+                            tok = st.secrets.get("GS_WEBAPP_TOKEN", "")
+                
+                            payload = {
+                                "token": tok,
+                                "action": "write_tables",                  # 👈 CLAVE: ahora sí hay action
+                                "sheets": [
+                                    {"name": "inv_multimes_export",        # 👈 nombre de pestaña en Sheets
+                                     "values": values}                      #    lo que tu WebApp escribe tal cual
+                                ]
+                            }
+                
+                            import requests, textwrap
+                            r = requests.post(url, json=payload, timeout=60, allow_redirects=True)
+                            st.write("GS status:", r.status_code)
+                            st.code(textwrap.shorten(r.text, width=1000, placeholder=" … "), language="json")
+                
+                            if r.status_code == 200:
+                                st.toast("Exportado a Google Sheets ✅")
+                            else:
+                                st.warning("El WebApp respondió algo inesperado. Revisá el JSON arriba.")
+                
                         except Exception as e:
                             st.error("No se pudo preparar/exportar la tabla multimes con el sistema existente.")
                             st.exception(e)
-                ws_name = "inv_multimes_export"  # ← usa el nombre REAL de la pestaña que crea tu exportador
+                
+                ws_name = "inv_multimes_export"  # ← sigue igual, es la pestaña creada/actualizada en Sheets
 
                 if st.button("🎨 Aplicar formato (opcional)", key="btn_format_inv_multimes"):
                     formatear_hoja_backup(ws_name)

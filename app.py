@@ -249,6 +249,31 @@ def publish_public_view(show_df: pd.DataFrame):
     if r.status_code not in (200, 201):
         raise RuntimeError(f"GitHub PUT falló: {r.status_code} {r.text[:200]}")
 
+import requests, json, textwrap, streamlit as st
+
+def call_webapp(action: str, data: dict):
+    url = st.secrets["GS_WEBAPP_URL"]
+    tok = st.secrets.get("GS_WEBAPP_TOKEN", "")
+    payload = {"action": action, "token": tok, **(data or {})}
+    r = requests.post(url, json=payload, timeout=40)
+    # Muestra respuesta para debug inmediato
+    st.write("STATUS:", r.status_code)
+    st.code(textwrap.shorten(r.text, width=800, placeholder=" … "), language="json")
+    return r
+
+if st.button("🔎 Probar export: ventas → Sheets"):
+    # Enviar 1 fila de prueba para ver si escribe realmente
+    data_demo = {
+        "sheetId": st.secrets.get("SHEETS_BACKUP_SPREADSHEET_ID") or st.secrets.get("SHEET_ID"),
+        "tab": "VentasBackup",  # 👈 nombre de la pestaña que quieras
+        "header": ["id","fecha","cliente","vendedor","inversor","moneda","venta","costo","compra","comision"],
+        "rows": [
+            [999999, "2025-10-22", "TEST CLIENTE", "Toto Donofrio", "GONZA", "USD", 1234.56, 800.00, 944.00, 173.82]
+        ],
+        "mode": "REPLACE"  # o "APPEND"
+    }
+    call_webapp("export_ventas", data_demo)
+
 # === VISTA PÚBLICA =====================================================
 public = qp_get("public", "0")
 if str(public) == "1":

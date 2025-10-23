@@ -750,7 +750,7 @@ def exportar_a_sheets_webapp_desde_sqlite(db_path: str):
                 _log(f"⚠️ Ping falló ({e}); intento igual el POST…")
 
             # 4) Enviar POST con reintentos suaves
-            payload = {"token": token, "sheets": sheets}
+            payload = {"token": token, "action": "write_tables", "sheets": sheets}
             for attempt in range(3):
                 _log(f"⬆️ POST intento {attempt+1}…")
                 try:

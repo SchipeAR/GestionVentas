@@ -261,18 +261,6 @@ def call_webapp(action: str, data: dict):
     st.code(textwrap.shorten(r.text, width=800, placeholder=" … "), language="json")
     return r
 
-if st.button("🔎 Probar export: ventas → Sheets"):
-    # Enviar 1 fila de prueba para ver si escribe realmente
-    data_demo = {
-        "sheetId": st.secrets.get("SHEETS_BACKUP_SPREADSHEET_ID") or st.secrets.get("SHEET_ID"),
-        "tab": "VentasBackup",  # 👈 nombre de la pestaña que quieras
-        "header": ["id","fecha","cliente","vendedor","inversor","moneda","venta","costo","compra","comision"],
-        "rows": [
-            [999999, "2025-10-22", "TEST CLIENTE", "Toto Donofrio", "GONZA", "USD", 1234.56, 800.00, 944.00, 173.82]
-        ],
-        "mode": "REPLACE"  # o "APPEND"
-    }
-    call_webapp("export_ventas", data_demo)
 
 # === VISTA PÚBLICA =====================================================
 public = qp_get("public", "0")

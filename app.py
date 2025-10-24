@@ -3222,7 +3222,7 @@ if is_admin_user:
                 
                 ws_name = "inv_multimes_export"  # ← sigue igual, es la pestaña creada/actualizada en Sheets
 
-                if st.button("🎨 Aplicar formato (opcional)", key="btn_format_inv_multimes"):
+                if st.button("🎨 Aplicar formato (opcional)", key="btn_format_inv_multimes_B"):
                     formatear_hoja_backup(ws_name)
 
                 st.divider()

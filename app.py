@@ -1590,35 +1590,6 @@ def rename_admin_user(old_username: str, new_username: str, current_password: st
     except sqlite3.IntegrityError:
         return False, "Ya existe un usuario con ese nombre."
 
-def _paid_bool(cuota_dict) -> bool:
-    """True si la cuota está paga (tolera 0/1, 'true', '1', etc.) o si tiene paid_at."""
-    val = cuota_dict.get("paid", 0)
-    if cuota_dict.get("paid_at"):
-        return True
-    if isinstance(val, bool):
-        return val
-    if isinstance(val, (int, float)):
-        return bool(int(val))
-    s = str(val).strip().lower()
-    return s in ("1", "true", "t", "yes", "y", "si", "sí")
-
-def _parse_paid_at(x):
-    """Convierte paid_at en datetime naive. Acepta 'YYYY-MM-DD' o 'YYYY-MM-DDTHH:MM:SS'."""
-    if not x:
-        return None
-    s = str(x).strip().replace("Z", "")
-    try:
-        # ISO completo
-        return datetime.fromisoformat(s.replace("T", " "))
-    except Exception:
-        # Solo fecha
-        try:
-            return datetime.strptime(s, "%Y-%m-%d")
-        except Exception:
-            return None
-
-
-
 # =========================
 # UI
 # =========================
@@ -2668,6 +2639,36 @@ with tab_listar:
                 st.caption("Ventas en PESOS con cuotas SEMANALES")
                 render_listado(ops_sem, key_prefix="sem")
 
+# ==== Helpers para pagos a inversores ====
+from datetime import datetime
+import pandas as pd
+
+def _paid_bool(cuota_dict) -> bool:
+    """True si la cuota está paga (tolera 0/1, 'true', etc.) o si tiene paid_at."""
+    if cuota_dict is None:
+        return False
+    if cuota_dict.get("paid_at"):
+        return True
+    val = cuota_dict.get("paid", 0)
+    if isinstance(val, bool):
+        return val
+    if isinstance(val, (int, float)):
+        return bool(int(val))
+    s = str(val).strip().lower()
+    return s in ("1", "true", "t", "yes", "y", "si", "sí")
+
+def _to_paid_at_dt(x):
+    """Convierte paid_at a datetime (o NaT). Acepta 'YYYY-MM-DD' y 'YYYY-MM-DDTHH:MM:SS'."""
+    if x is None or x == "":
+        return pd.NaT
+    s = str(x).strip().replace("Z", "").replace("T", " ")
+    try:
+        return pd.to_datetime(s, errors="coerce")
+    except Exception:
+        return pd.NaT
+# =========================================
+
+
 # --------- INVERSORES (DETALLE POR CADA UNO) ---------
 # Ocultamos la pestaña a los vendedores para no exponer datos globales
 if is_admin_user:
@@ -2800,84 +2801,105 @@ if is_admin_user:
                 st.divider()
                 st.subheader("💸 Cuotas a inversores por mes")
 
-                # Controles: año/mes, solo impagas, filtro de inversor
+                # ===================== Pagos a inversores por MES (por fecha de pago real) =====================
+                from datetime import date as _date, datetime as _dt
+                
+                hoy = _date.today()
                 c1, c2, c3, c4 = st.columns([1,1,1,2])
                 with c1:
                     inv_year = st.number_input("Año", min_value=2000, max_value=2100, value=hoy.year, step=1, key="inv_mes_year")
                 with c2:
                     inv_month = st.number_input("Mes", min_value=1, max_value=12, value=hoy.month, step=1, key="inv_mes_month")
                 with c3:
-                    solo_impagas = st.toggle("Solo impagas", value=True, key="inv_mes_only_unpaid")
-                # lista de inversores a partir de tus operaciones (o usa INVERSORES si ya lo tenés)
-                inv_names = sorted({ (op.get("nombre") or "").strip() for op in (ops_all or []) if (op.get("nombre") or "").strip() })
+                    solo_impagas = st.toggle("Solo impagas", value=False, key="inv_mes_only_unpaid")
+                
+                # lista de inversores detectados en operaciones
+                ops_all = list_operations(user_scope_filters({})) or []
+                inv_names = sorted({ (op.get("nombre") or "").strip() for op in ops_all if (op.get("nombre") or "").strip() })
                 with c4:
                     inv_sel = st.selectbox("Inversor", options=(["Todos"] + inv_names), index=0, key="inv_mes_filter")
-
-                # helper: vencimiento por cuota (semanal/mensual)
-                def _due_for(op, idx: int):
-                    try:
-                        # si ya creaste due_date_for, usalo
-                        return due_date_for(op, int(idx))
-                    except Exception:
-                        # fallback mensual
-                        base = parse_iso_or_today(op.get("sale_date") or op.get("created_at"))
-                        return add_months(base, max(int(idx)-1, 0))
-
-                rows = []
-                total_mes = 0.0
-
-                # Recorremos operaciones y cuotas de COMPRA (pagos a inversor)
-                for op in (ops_all or []):
+                
+                # Traer cuotas COMPRA y normalizar paid/paid_at
+                rows_c = []
+                for op in ops_all:
                     inv_name = (op.get("nombre") or "").strip()
                     if inv_sel != "Todos" and inv_name.upper() != inv_sel.upper():
                         continue
-
-                    cuotas_compra = list_installments(op["id"], is_purchase=True) or []
+                    op_id = int(op["id"])
+                    cuotas_compra = list_installments(op_id, is_purchase=True) or []
                     for c in cuotas_compra:
-                        try:
-                            idx = int(c["idx"])
-                        except Exception:
-                            continue
-                        venc = _due_for(op, idx)
-                        if venc.year == int(inv_year) and venc.month == int(inv_month):
-                            pagada = _paid_bool(c)
-                            if solo_impagas and pagada:
-                                continue
-                            monto = float(c["amount"] or 0.0)
-                            total_mes += monto
-                            rows.append({
-                                "Inversor": inv_name or "—",
-                                "ID venta": int(op["id"]),
-                                "Cuota #": idx,
-                                "Vence": venc.strftime("%d/%m/%Y"),
-                                "Monto": monto,
-                                "Estado": ("Pagada" if pagada else "Impaga")
-                            })
-
-                st.metric(
-                    f"Total a pagar en {int(inv_month):02d}/{int(inv_year)}" + (" (impagas)" if solo_impagas else ""),
-                    f"{total_mes:,.2f}"
-                )
-
-                if rows:
-                    df_det = pd.DataFrame(rows)
-                    # Resumen por inversor
-                    df_res = df_det.groupby("Inversor", as_index=False)["Monto"].sum().rename(columns={"Monto":"Total del mes"})
-                    cA, cB = st.columns([1,2])
-                    with cA:
-                        st.markdown("**Resumen por inversor**")
-                        st.dataframe(
-                            df_res.sort_values("Total del mes", ascending=False),
-                            use_container_width=True, hide_index=True
-                        )
-                    with cB:
-                        st.markdown("**Detalle de cuotas del mes**")
-                        st.dataframe(
-                            df_det.sort_values(["Inversor","Vence","ID venta","Cuota #"]),
-                            use_container_width=True, hide_index=True
-                        )
+                        # bool robusto
+                        pf = c.get("paid", 0)
+                        if isinstance(pf, bool):
+                            is_paid = pf
+                        elif isinstance(pf, (int, float)):
+                            is_paid = bool(int(pf))
+                        else:
+                            is_paid = str(pf).strip().lower() in ("1","true","t","yes","y","si","sí")
+                
+                        # paid_at → datetime
+                        paid_dt = None
+                        s = str(c.get("paid_at") or "").strip().replace("Z","")
+                        if s:
+                            try:
+                                paid_dt = _dt.fromisoformat(s.replace("T"," "))
+                            except Exception:
+                                try:
+                                    paid_dt = _dt.strptime(s, "%Y-%m-%d")
+                                except Exception:
+                                    paid_dt = None
+                
+                        rows_c.append({
+                            "operation_id": op_id,
+                            "idx": int(c.get("idx") or 0),
+                            "amount": float(c.get("amount") or 0.0),
+                            "paid": is_paid,
+                            "paid_at_dt": paid_dt,
+                            "inversor": inv_name or "—",
+                        })
+                
+                inv_ins = pd.DataFrame(rows_c) if rows_c else pd.DataFrame(columns=["operation_id","idx","amount","paid","paid_at_dt","inversor"])
+                
+                if inv_ins.empty:
+                    st.info("No hay cuotas de COMPRA registradas.")
                 else:
-                    st.info("No hay cuotas que coincidan con el filtro seleccionado.")
+                    if solo_impagas:
+                        # Modo “solo impagas”: lista impagas sin mirar paid_at
+                        df_view = inv_ins[inv_ins["paid"] == False].copy()
+                        st.caption("Mostrando cuotas impagas (independiente de fecha).")
+                        total_mes = 0.0
+                    else:
+                        # Modo “pagadas del mes”: paid==True y paid_at dentro del mes/año
+                        mask_paid_month = inv_ins["paid"] & inv_ins["paid_at_dt"].notna() & \
+                                          (inv_ins["paid_at_dt"].dt.year == int(inv_year)) & \
+                                          (inv_ins["paid_at_dt"].dt.month == int(inv_month))
+                        df_view = inv_ins[mask_paid_month].copy()
+                        total_mes = float(df_view["amount"].sum())
+                
+                    st.metric(
+                        f"Total del mes {int(inv_month):02d}/{int(inv_year)} " + ("(impagas)" if solo_impagas else "(pagadas)"),
+                        f"{total_mes:,.2f}"
+                    )
+                
+                    if df_view.empty:
+                        st.info("No hay cuotas que coincidan con el filtro seleccionado.")
+                    else:
+                        # Resumen por inversor
+                        df_res = df_view.groupby("inversor", as_index=False)["amount"].sum().rename(columns={"amount": "Total del mes"})
+                        cA, cB = st.columns([1,2])
+                        with cA:
+                            st.markdown("**Resumen por inversor**")
+                            st.dataframe(df_res.sort_values("Total del mes", ascending=False), use_container_width=True, hide_index=True)
+                        with cB:
+                            st.markdown("**Detalle del mes**")
+                            if solo_impagas:
+                                df_det = df_view[["inversor","operation_id","idx","amount","paid"]].sort_values(["inversor","operation_id","idx"])
+                            else:
+                                df_view["pagado_en"] = df_view["paid_at_dt"].dt.strftime("%d/%m/%Y")
+                                df_det = df_view[["inversor","operation_id","idx","amount","pagado_en"]].sort_values(["inversor","pagado_en","operation_id","idx"])
+                            st.dataframe(df_det, use_container_width=True, hide_index=True)
+                # ===================== /Pagos a inversores por MES =====================
+
                 # ===================== /Cuotas a inversores por MES =====================
 
                 st.divider()

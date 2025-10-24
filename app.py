@@ -2778,7 +2778,7 @@ def build_inv_multimes_table(ops_all, start_year:int, start_month:int, months:in
         # 4) Lo PAGADO ACUMULADO hasta fin de mes (para “A PAGAR”)
         df_paid_upto = df[
             df["paid"] & df["paid_at"].notna() & (df["paid_at"] <= eom_dt)
-        ]s
+        ]
     
             
         # ----- por inversor -----

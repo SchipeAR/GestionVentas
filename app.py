@@ -2666,6 +2666,129 @@ def _to_paid_at_dt(x):
         return pd.to_datetime(s, errors="coerce")
     except Exception:
         return pd.NaT
+
+from datetime import date as _date, datetime as _dt
+import calendar as _cal
+import pandas as pd
+
+def build_inv_multimes_table(ops_all, start_year:int, start_month:int, months:int=6):
+    """
+    Devuelve (out_numeric, out_fmt) donde:
+      - out_numeric: DataFrame con totales en número (sin símbolos)
+      - out_fmt: mismo DF con formato $ para mostrar
+    Columnas por mes: [MES, MES — PAGADO, MES — A PAGAR]
+    Filas: inversores + 'TOTAL general'
+    """
+    # helpers de fecha
+    def _add_months(y, m, k):
+        m2 = m + k
+        y2 = y + (m2-1)//12
+        m2 = ((m2-1)%12) + 1
+        return y2, m2
+
+    def _month_label(y, m):
+        nombre = _cal.month_name[m].upper() if hasattr(_cal, "month_name") else f"{m:02d}"
+        return f"{nombre} {y}"
+
+    # recolectar cuotas de COMPRA
+    rows = []
+    for op in (ops_all or []):
+        inv = (op.get("nombre") or "").strip() or "—"
+        opid = int(op["id"])
+        cuotas_c = list_installments(opid, is_purchase=True) or []
+        for c in cuotas_c:
+            amt = float(c.get("amount") or 0.0)
+            idx = int(c.get("idx") or 0)
+            # debido EN el mes (usá tu due_date_for si lo tenés)
+            try:
+                due = due_date_for(op, idx)  # si en tu app existe esta función
+            except Exception:
+                base = parse_iso_or_today(op.get("sale_date") or op.get("created_at"))
+                due = add_months(base, max(idx-1, 0))
+            # paid / paid_at robustos
+            pf = c.get("paid", 0)
+            if isinstance(pf, bool):
+                is_paid = pf
+            elif isinstance(pf, (int, float)):
+                is_paid = bool(int(pf))
+            else:
+                is_paid = str(pf).strip().lower() in ("1","true","t","yes","y","si","sí")
+            paid_dt = None
+            s = str(c.get("paid_at") or "").strip().replace("Z","")
+            if s:
+                try:
+                    paid_dt = _dt.fromisoformat(s.replace("T"," "))
+                except Exception:
+                    try:
+                        paid_dt = _dt.strptime(s, "%Y-%m-%d")
+                    except Exception:
+                        paid_dt = None
+
+            rows.append({
+                "inversor": inv,
+                "amount": amt,
+                "due_y": due.year, "due_m": due.month,
+                "paid": is_paid, "paid_at": paid_dt,
+            })
+
+    df = pd.DataFrame(rows)
+    if df.empty:
+        # estructura vacía estándar
+        cols = []
+        y, m = int(start_year), int(start_month)
+        for k in range(months):
+            yy, mm = _add_months(y, m, k)
+            lab = _month_label(yy, mm)
+            cols += [lab, f"{lab} — PAGADO", f"{lab} — A PAGAR"]
+        return (pd.DataFrame(columns=cols), pd.DataFrame(columns=cols))
+
+    inv_list = sorted(df["inversor"].dropna().unique().tolist())
+    y, m = int(start_year), int(start_month)
+
+    data = {}
+    for inv in inv_list + ["TOTAL general"]:
+        data[inv] = {}
+
+    for k in range(months):
+        yy, mm = _add_months(y, m, k)
+        lab = _month_label(yy, mm)
+        col_mes      = lab
+        col_pagado   = f"{lab} — PAGADO"
+        col_apagar   = f"{lab} — A PAGAR"
+
+        df_mes_due    = df[(df["due_y"]==yy) & (df["due_m"]==mm)]
+        df_mes_paidat = df[df["paid"] & df["paid_at"].notna() &
+                           (df["paid_at"].dt.year==yy) & (df["paid_at"].dt.month==mm)]
+
+        # por inversor
+        for inv in inv_list:
+            due_total    = float(df_mes_due.loc[df_mes_due["inversor"]==inv, "amount"].sum())
+            pagado_total = float(df_mes_paidat.loc[df_mes_paidat["inversor"]==inv, "amount"].sum())
+            apagar_total = max(due_total - pagado_total, 0.0)
+
+            data[inv][col_mes]    = due_total
+            data[inv][col_pagado] = pagado_total
+            data[inv][col_apagar] = apagar_total
+
+        # fila total general
+        due_total_g    = float(df_mes_due["amount"].sum())
+        pagado_total_g = float(df_mes_paidat["amount"].sum())
+        apagar_total_g = max(due_total_g - pagado_total_g, 0.0)
+        data["TOTAL general"][col_mes]    = due_total_g
+        data["TOTAL general"][col_pagado] = pagado_total_g
+        data["TOTAL general"][col_apagar] = apagar_total_g
+
+    out_numeric = pd.DataFrame.from_dict(data, orient="index").reset_index().rename(columns={"index":" "})
+    # formato $
+    def _fmt(x): 
+        try: return fmt_money_up(float(x))
+        except: return x
+    out_fmt = out_numeric.copy()
+    for c in out_fmt.columns:
+        if c != " ":
+            out_fmt[c] = out_fmt[c].apply(_fmt)
+    return out_numeric, out_fmt
+
 # =========================================
 
 
@@ -2899,6 +3022,48 @@ if is_admin_user:
                                 df_det = df_view[["inversor","operation_id","idx","amount","pagado_en"]].sort_values(["inversor","pagado_en","operation_id","idx"])
                             st.dataframe(df_det, use_container_width=True, hide_index=True)
                 # ===================== /Pagos a inversores por MES =====================
+                st.subheader("Cuotas a inversores — vista multi-mes")
+                
+                # Controles de rango
+                hoy = _date.today()
+                col_a, col_b, col_c = st.columns([1,1,1])
+                with col_a:
+                    base_year = st.number_input("Año base", min_value=2000, max_value=2100, value=hoy.year, step=1, key="inv_mm_year")
+                with col_b:
+                    base_month = st.number_input("Mes base", min_value=1, max_value=12, value=hoy.month, step=1, key="inv_mm_month")
+                with col_c:
+                    months = st.number_input("Meses a mostrar", min_value=1, max_value=12, value=6, step=1, key="inv_mm_span")
+                
+                ops_all = list_operations(user_scope_filters({})) or []
+                out, out_fmt = build_inv_multimes_table(ops_all, int(base_year), int(base_month), int(months))
+                
+                if out.empty:
+                    st.info("No hay datos para el rango seleccionado.")
+                else:
+                    st.dataframe(out_fmt, use_container_width=True, hide_index=True, height=280)
+                
+                    # Exportar con tu sistema existente (graba en SQLite 'inv_multimes_export' y dispara tu WebApp)
+                    c_exp1, c_exp2 = st.columns([1,1])
+                    with c_exp1:
+                        if st.button("📤 Exportar a Sheets (multi-mes)", key="btn_export_inv_multimes_existente"):
+                            try:
+                                df_export = out.copy().reset_index(drop=True)  # sin símbolos
+                                with sqlite3.connect(DB_PATH) as con:
+                                    df_export.to_sql("inv_multimes_export", con, if_exists="replace", index=False)
+                                exportar_a_sheets_webapp_desde_sqlite(DB_PATH)
+                                st.success("Exportado a Sheets con el sistema existente ✅")
+                            except Exception as e:
+                                st.error("No se pudo exportar la tabla multi-mes.")
+                                st.exception(e)
+                
+                    with c_exp2:
+                        if st.button("✨ Aplicar formato en Sheets", key="btn_format_inv_multimes"):
+                            try:
+                                formatear_hoja_backup("inv_multimes_export")  # si ya tenés esta función
+                                st.success("Formato aplicado en Sheets ✅")
+                            except Exception as e:
+                                st.error("No se pudo aplicar el formato.")
+                                st.exception(e)
 
                 # ===================== /Cuotas a inversores por MES =====================
 

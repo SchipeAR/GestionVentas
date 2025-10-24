@@ -3177,7 +3177,7 @@ if is_admin_user:
                 c_exp1, c_exp2 = st.columns([1, 3])
 
                 with c_exp1:
-                    if st.button("📤 Preparar y exportar a Sheets (usar sistema existente)", key="btn_export_inv_multimes_existente"):
+                    if st.button("📤 Preparar y exportar a Sheets (usar sistema existente)", key="btn_export_inv_multimes_existente_B"):
                         try:
                             # 1) Preparamos un DF numérico y "planito" (sin $), con índice como columna
                             df_export = out.copy().reset_index()  # 'out' es la tabla multimes NUMÉRICA (NO out_fmt)

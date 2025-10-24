@@ -2818,7 +2818,7 @@ def build_inv_multimes_table(ops_all, start_year:int, start_month:int, months:in
     for c in out_fmt.columns:
         if c != " ":
             out_fmt[c] = out_fmt[c].apply(_fmt)
-    return out_numeric, out_fmt, detalles_por_mes
+    return out_numeric, out_fmt
 
 # =========================================
 

@@ -2778,10 +2778,8 @@ def build_inv_multimes_table(ops_all, start_year:int, start_month:int, months:in
         # 4) Lo PAGADO ACUMULADO hasta fin de mes (para “A PAGAR”)
         df_paid_upto = df[
             df["paid"] & df["paid_at"].notna() & (df["paid_at"] <= eom_dt)
-        ]
-        if "detalles_por_mes" not in locals():
-            detalles_por_mes = {}
-        detalles_por_mes[lab] = df_mes_due[["inversor","operation_id","idx","amount","paid"]].copy()
+        ]s
+    
             
         # ----- por inversor -----
         for inv in inv_list:

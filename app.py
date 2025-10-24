@@ -2779,7 +2779,10 @@ def build_inv_multimes_table(ops_all, start_year:int, start_month:int, months:in
         df_paid_upto = df[
             df["paid"] & df["paid_at"].notna() & (df["paid_at"] <= eom_dt)
         ]
-    
+        if "detalles_por_mes" not in locals():
+            detalles_por_mes = {}
+        detalles_por_mes[lab] = df_mes_due[["inversor","operation_id","idx","amount","paid"]].copy()
+            
         # ----- por inversor -----
         for inv in inv_list:
             # MES (vencimientos del mes)
@@ -2817,7 +2820,7 @@ def build_inv_multimes_table(ops_all, start_year:int, start_month:int, months:in
     for c in out_fmt.columns:
         if c != " ":
             out_fmt[c] = out_fmt[c].apply(_fmt)
-    return out_numeric, out_fmt
+    return out_numeric, out_fmt, detalles_por_mes
 
 # =========================================
 
@@ -2998,12 +3001,62 @@ if is_admin_user:
                             st.dataframe(df_res.sort_values("Total del mes", ascending=False), use_container_width=True, hide_index=True)
                         with cB:
                             st.markdown("**Detalle del mes**")
-                            if solo_impagas:
-                                df_det = df_view[["inversor","operation_id","idx","amount","paid"]].sort_values(["inversor","operation_id","idx"])
+                        
+                            yy, mm = int(inv_year), int(inv_month)
+                        
+                            # Si ya tenés ops_all arriba, usalo. Si no, descomentá la línea de abajo:
+                            # ops_all = list_operations(user_scope_filters({})) or []
+                        
+                            filas = []
+                            for op in ops_all:
+                                inv_name = (op.get("nombre") or "").strip()
+                                if inv_sel != "Todos" and inv_name.upper() != inv_sel.upper():
+                                    continue
+                        
+                                cuotas_c = list_installments(op["id"], is_purchase=True) or []
+                                for c in cuotas_c:
+                                    idx = int(c["idx"])
+                                    # IMPORTANT: due_date_for respeta mensual / semanal
+                                    due_dt = due_date_for(op, idx)
+                        
+                                    # Sólo cuotas que VENCEN en el mes elegido
+                                    if due_dt.year == yy and due_dt.month == mm:
+                                        is_paid  = bool(c.get("paid") or False)
+                                        paid_at  = c.get("paid_at") or None
+                        
+                                        # Filtro según toggle
+                                        if solo_impagas and is_paid:
+                                            continue
+                                        if (not solo_impagas) and (not is_paid):
+                                            continue
+                        
+                                        filas.append({
+                                            "inversor": inv_name,
+                                            "operation_id": int(op["id"]),
+                                            "idx": idx,
+                                            "amount": float(c["amount"] or 0.0),
+                                            "paid": is_paid,
+                                            "paid_at": paid_at,
+                                        })
+                        
+                            import pandas as pd
+                            df_det = pd.DataFrame(filas)
+                        
+                            if df_det.empty:
+                                st.info("No hay cuotas que venzan este mes con el filtro seleccionado.")
                             else:
-                                df_view["pagado_en"] = df_view["paid_at_dt"].dt.strftime("%d/%m/%Y")
-                                df_det = df_view[["inversor","operation_id","idx","amount","pagado_en"]].sort_values(["inversor","pagado_en","operation_id","idx"])
-                            st.dataframe(df_det, use_container_width=True, hide_index=True)
+                                if not solo_impagas:
+                                    # Mostrar fecha de pago legible cuando mirás cuotas pagadas del mes
+                                    df_det["Pagado el"] = pd.to_datetime(df_det["paid_at"], errors="coerce").dt.strftime("%d/%m/%Y")
+                                    cols = ["inversor", "operation_id", "idx", "amount", "Pagado el"]
+                                else:
+                                    cols = ["inversor", "operation_id", "idx", "amount", "paid"]
+                        
+                                st.dataframe(
+                                    df_det[cols].sort_values(["inversor", "operation_id", "idx"]),
+                                    use_container_width=True, hide_index=True
+                                )
+
                 
 
                 st.divider()

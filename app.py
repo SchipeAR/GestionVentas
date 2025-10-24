@@ -1590,6 +1590,34 @@ def rename_admin_user(old_username: str, new_username: str, current_password: st
     except sqlite3.IntegrityError:
         return False, "Ya existe un usuario con ese nombre."
 
+def _paid_bool(cuota_dict) -> bool:
+    """True si la cuota está paga (tolera 0/1, 'true', '1', etc.) o si tiene paid_at."""
+    val = cuota_dict.get("paid", 0)
+    if cuota_dict.get("paid_at"):
+        return True
+    if isinstance(val, bool):
+        return val
+    if isinstance(val, (int, float)):
+        return bool(int(val))
+    s = str(val).strip().lower()
+    return s in ("1", "true", "t", "yes", "y", "si", "sí")
+
+def _parse_paid_at(x):
+    """Convierte paid_at en datetime naive. Acepta 'YYYY-MM-DD' o 'YYYY-MM-DDTHH:MM:SS'."""
+    if not x:
+        return None
+    s = str(x).strip().replace("Z", "")
+    try:
+        # ISO completo
+        return datetime.fromisoformat(s.replace("T", " "))
+    except Exception:
+        # Solo fecha
+        try:
+            return datetime.strptime(s, "%Y-%m-%d")
+        except Exception:
+            return None
+
+
 
 # =========================
 # UI
@@ -2812,7 +2840,7 @@ if is_admin_user:
                             continue
                         venc = _due_for(op, idx)
                         if venc.year == int(inv_year) and venc.month == int(inv_month):
-                            pagada = bool(c["paid"])
+                            pagada = _paid_bool(c)
                             if solo_impagas and pagada:
                                 continue
                             monto = float(c["amount"] or 0.0)
@@ -2896,6 +2924,46 @@ if is_admin_user:
 
                     st.metric("A pagar este mes (impago)", f"${to_pay_month:,.2f}")
                     st.write(f"**Ganancia acumulada del inversor (18%)**: ${inv_ganancia:,.2f}")
+                    # === Pagado del mes SEGÚN FECHA DE PAGO (paid_at), no por vencimiento ===
+                    inv_ins = ins_df.copy()
+                    inv_ins["_paid_at_dt"] = inv_ins["paid_at"].apply(_to_paid_at_dt)
+                    
+                    pagado_mes = inv_ins[
+                        (inv_ins["tipo"]=="COMPRA") &
+                        (inv_ins["paid"]==True) &
+                        (inv_ins["_paid_at_dt"].dt.year==anio_actual) &
+                        (inv_ins["_paid_at_dt"].dt.month==mes_actual)
+                    ]["amount"].sum()
+                    
+                    st.metric(
+                        f"Pagado este mes (por fecha de pago)",
+                        f"${float(pagado_mes):,.2f}"
+                    )
+                    
+                    # (Opcional) Tabla-resumen por inversor de lo pagado en el mes
+                    df_pag = inv_ins[
+                        (inv_ins["tipo"]=="COMPRA") &
+                        (inv_ins["paid"]==True) &
+                        (inv_ins["_paid_at_dt"].dt.year==anio_actual) &
+                        (inv_ins["_paid_at_dt"].dt.month==mes_actual)
+                    ][["inversor","operation_id","idx","_paid_at_dt","amount"]].rename(
+                        columns={"inversor":"Inversor","operation_id":"ID venta","idx":"Cuota #","_paid_at_dt":"Pagada el","amount":"Monto"}
+                    )
+                    
+                    if not df_pag.empty:
+                        df_pag = df_pag.sort_values(["Inversor","Pagada el","ID venta","Cuota #"])
+                        c1, c2 = st.columns([1,2])
+                        with c1:
+                            st.markdown("**Pagado del mes (por paid_at) — resumen**")
+                            df_res_pag = df_pag.groupby("Inversor", as_index=False)["Monto"].sum().rename(columns={"Monto":"Pagado del mes"})
+                            st.dataframe(df_res_pag.sort_values("Pagado del mes", ascending=False), use_container_width=True, hide_index=True)
+                        with c2:
+                            st.markdown("**Detalle de pagos del mes (por paid_at)**")
+                            df_pag["Pagada el"] = df_pag["Pagada el"].dt.strftime("%d/%m/%Y")
+                            st.dataframe(df_pag, use_container_width=True, hide_index=True)
+                    else:
+                        st.info("No hay cuotas pagadas en el mes seleccionado (según fecha de pago).")
+
                 st.divider()
                 c_exp1, c_exp2 = st.columns([1, 3])
 

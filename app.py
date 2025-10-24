@@ -1460,6 +1460,32 @@ def build_installments_df(ops):
     cols = ["operation_id","tipo","idx","amount","paid","paid_at","due_date","cliente","vendedor","inversor"]
     return pd.DataFrame(rows) if rows else pd.DataFrame(columns=cols)
 
+from datetime import timedelta
+
+def due_date_for(op: dict, idx: int):
+    """
+    Fecha de vencimiento de la cuota idx para la operación op.
+    - Mensual: (idx-1) meses desde sale_date/created_at
+    - Semanal: (idx-1) semanas
+    """
+    base = parse_iso_or_today(op.get("sale_date") or op.get("created_at"))
+    try:
+        i = int(idx)
+    except Exception:
+        i = 1
+    i = max(i, 1)
+
+    is_weekly = bool(
+        op.get("is_weekly") or op.get("weekly") or
+        str(op.get("frecuencia") or op.get("frequency") or "").lower() in ("semanal", "weekly") or
+        (str(op.get("currency") or "").upper() == "ARS" and bool(op.get("weekly_flag")))
+    )
+
+    if is_weekly:
+        return base + timedelta(weeks=i - 1)
+    return add_months(base, i - 1)
+
+
 # ========= Autenticación y roles =========
 def auth_get_user(username: str):
     with get_conn() as con:
@@ -3020,7 +3046,8 @@ if is_admin_user:
                                 for c in cuotas_c:
                                     idx = int(c["idx"])
                                     # IMPORTANT: due_date_for respeta mensual / semanal
-                                    due_dt = _due_for(op, idx)
+                                    due_dt = due_date_for(op, idx)
+
                         
                                     # Sólo cuotas que VENCEN en el mes elegido
                                     if due_dt.year == yy and due_dt.month == mm:

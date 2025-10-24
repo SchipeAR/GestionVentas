@@ -1445,7 +1445,7 @@ def build_installments_df(ops):
             due = add_months(base, int(c["idx"]) - 1)
             rows.append({
                 "operation_id": op_id, "tipo": "VENTA", "idx": int(c["idx"]),
-                "amount": float(c["amount"]), "paid": paid_bool_from_dict(c),
+                "amount": float(c["amount"]), "paid": bool(c["paid"]),
                 "paid_at": None if not c["paid_at"] else parse_iso_or_today(c["paid_at"]),
                 "due_date": due, "cliente": cliente, "vendedor": vendedor, "inversor": inversor
             })

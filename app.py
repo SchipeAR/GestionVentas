@@ -1590,17 +1590,35 @@ def rename_admin_user(old_username: str, new_username: str, current_password: st
     except sqlite3.IntegrityError:
         return False, "Ya existe un usuario con ese nombre."
 
+# ==== Helpers para normalizar pagos de cuotas (poner antes de la sección Inversores) ====
+from datetime import datetime
+import pandas as pd
+
 def _paid_bool(cuota_dict) -> bool:
-    """True si la cuota está paga (tolera 0/1, 'true', '1', etc.) o si tiene paid_at."""
-    val = cuota_dict.get("paid", 0)
+    """True si la cuota está paga (tolera 0/1, 'true', etc.) o si tiene paid_at."""
+    if cuota_dict is None:
+        return False
     if cuota_dict.get("paid_at"):
         return True
+    val = cuota_dict.get("paid", 0)
     if isinstance(val, bool):
         return val
     if isinstance(val, (int, float)):
         return bool(int(val))
     s = str(val).strip().lower()
     return s in ("1", "true", "t", "yes", "y", "si", "sí")
+
+def _to_paid_at_dt(x):
+    """Convierte paid_at a datetime (o NaT). Acepta 'YYYY-MM-DD' y 'YYYY-MM-DDTHH:MM:SS'."""
+    if x is None or x == "":
+        return pd.NaT
+    s = str(x).strip().replace("Z", "").replace("T", " ")
+    try:
+        return pd.to_datetime(s, errors="coerce")
+    except Exception:
+        return pd.NaT
+# =============================================================================
+
 
 def _parse_paid_at(x):
     """Convierte paid_at en datetime naive. Acepta 'YYYY-MM-DD' o 'YYYY-MM-DDTHH:MM:SS'."""
@@ -2924,45 +2942,53 @@ if is_admin_user:
 
                     st.metric("A pagar este mes (impago)", f"${to_pay_month:,.2f}")
                     st.write(f"**Ganancia acumulada del inversor (18%)**: ${inv_ganancia:,.2f}")
-                    # === Pagado del mes SEGÚN FECHA DE PAGO (paid_at), no por vencimiento ===
+                    # === Pagado del mes SEGÚN FECHA DE PAGO (paid_at) ===
                     inv_ins = ins_df.copy()
+                    
+                    # Asegurar columna paid_at
+                    if "paid_at" not in inv_ins.columns:
+                        inv_ins["paid_at"] = None
+                    
+                    # Parsear a datetime (columna auxiliar)
                     inv_ins["_paid_at_dt"] = inv_ins["paid_at"].apply(_to_paid_at_dt)
                     
+                    # Si usás inv_year/inv_month en esa vista:
+                    year_f = int(inv_year)   if "inv_year"   in locals() else int(anio_actual)
+                    month_f = int(inv_month) if "inv_month"  in locals() else int(mes_actual)
+                    
                     pagado_mes = inv_ins[
-                        (inv_ins["tipo"]=="COMPRA") &
-                        (inv_ins["paid"]==True) &
-                        (inv_ins["_paid_at_dt"].dt.year==anio_actual) &
-                        (inv_ins["_paid_at_dt"].dt.month==mes_actual)
+                        (inv_ins["tipo"] == "COMPRA") &
+                        (inv_ins["paid"] == True) &
+                        (inv_ins["_paid_at_dt"].dt.year  == year_f) &
+                        (inv_ins["_paid_at_dt"].dt.month == month_f)
                     ]["amount"].sum()
                     
-                    st.metric(
-                        f"Pagado este mes (por fecha de pago)",
-                        f"${float(pagado_mes):,.2f}"
-                    )
+                    st.metric(f"Pagado este mes (por fecha de pago)", f"${float(pagado_mes):,.2f}")
                     
-                    # (Opcional) Tabla-resumen por inversor de lo pagado en el mes
+                    # (Opcional) Detalle/resumen por inversor
                     df_pag = inv_ins[
-                        (inv_ins["tipo"]=="COMPRA") &
-                        (inv_ins["paid"]==True) &
-                        (inv_ins["_paid_at_dt"].dt.year==anio_actual) &
-                        (inv_ins["_paid_at_dt"].dt.month==mes_actual)
+                        (inv_ins["tipo"] == "COMPRA") &
+                        (inv_ins["paid"] == True) &
+                        (inv_ins["_paid_at_dt"].dt.year  == year_f) &
+                        (inv_ins["_paid_at_dt"].dt.month == month_f)
                     ][["inversor","operation_id","idx","_paid_at_dt","amount"]].rename(
                         columns={"inversor":"Inversor","operation_id":"ID venta","idx":"Cuota #","_paid_at_dt":"Pagada el","amount":"Monto"}
                     )
                     
                     if not df_pag.empty:
                         df_pag = df_pag.sort_values(["Inversor","Pagada el","ID venta","Cuota #"])
-                        c1, c2 = st.columns([1,2])
-                        with c1:
+                        c1_, c2_ = st.columns([1,2])
+                        with c1_:
                             st.markdown("**Pagado del mes (por paid_at) — resumen**")
                             df_res_pag = df_pag.groupby("Inversor", as_index=False)["Monto"].sum().rename(columns={"Monto":"Pagado del mes"})
                             st.dataframe(df_res_pag.sort_values("Pagado del mes", ascending=False), use_container_width=True, hide_index=True)
-                        with c2:
+                        with c2_:
                             st.markdown("**Detalle de pagos del mes (por paid_at)**")
                             df_pag["Pagada el"] = df_pag["Pagada el"].dt.strftime("%d/%m/%Y")
                             st.dataframe(df_pag, use_container_width=True, hide_index=True)
                     else:
                         st.info("No hay cuotas pagadas en el mes seleccionado (según fecha de pago).")
+
 
                 st.divider()
                 c_exp1, c_exp2 = st.columns([1, 3])

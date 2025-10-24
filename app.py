@@ -1445,7 +1445,7 @@ def build_installments_df(ops):
             due = add_months(base, int(c["idx"]) - 1)
             rows.append({
                 "operation_id": op_id, "tipo": "VENTA", "idx": int(c["idx"]),
-                "amount": float(c["amount"]), "paid": bool(c["paid"]),
+                "amount": float(c["amount"]), "paid": paid_bool_from_dict(c),
                 "paid_at": None if not c["paid_at"] else parse_iso_or_today(c["paid_at"]),
                 "due_date": due, "cliente": cliente, "vendedor": vendedor, "inversor": inversor
             })
@@ -1453,7 +1453,7 @@ def build_installments_df(ops):
             due = add_months(base, int(c["idx"]) - 1)
             rows.append({
                 "operation_id": op_id, "tipo": "COMPRA", "idx": int(c["idx"]),
-                "amount": float(c["amount"]), "paid": bool(c["paid"]),
+                "amount": float(c["amount"]), "paid": paid_bool_from_dict(c),
                 "paid_at": None if not c["paid_at"] else parse_iso_or_today(c["paid_at"]),
                 "due_date": due, "cliente": cliente, "vendedor": vendedor, "inversor": inversor
             })
@@ -2404,7 +2404,7 @@ with tab_listar:
                                     "id": c["id"],
                                     "Cuota": c["idx"],
                                     "Monto": show_amt,  # mostrado neto (o bruto si Toto)
-                                    "Pagada": bool(c["paid"]),
+                                    "Pagada": paid_bool_from_dict(c),
                                     "Fecha pago (registrada)": fmt_dmy_from_iso(c["paid_at"]),
                                     "Comentario": notes_orig_v.get(c["id"], "")
                                 })
@@ -2439,7 +2439,7 @@ with tab_listar:
 
                             if (not solo_lectura) and st.button("Guardar estado de cuotas VENTA", key=f"{key_prefix}_btn_pagar_v_{op['id']}"):
                                 iso_v = to_iso(fecha_pago_v)
-                                orig_by_id = {c["id"]: bool(c["paid"]) for c in cuotas_venta}
+                                orig_by_id = {c["id"]: paid_bool_from_dict(c) for c in cuotas_venta}
                                 for iid, row in edited_qv.iterrows():
                                     iid = int(iid)
                                     new_paid = bool(row["Pagada"])
@@ -2481,7 +2481,7 @@ with tab_listar:
                                     "id": c["id"],
                                     "Cuota": c["idx"],
                                     "Monto": float(c["amount"]),
-                                    "Pagada": bool(c["paid"]),
+                                    "Pagada": paid_bool_from_dict(c),
                                     "Fecha pago (registrada)": fmt_dmy_from_iso(c["paid_at"]),
                                     "Comentario": notes_orig_c.get(c["id"], "")
                                 } for c in cuotas_compra])
@@ -2509,7 +2509,7 @@ with tab_listar:
 
                                 if (not solo_lectura) and st.button("Guardar estado de cuotas COMPRA", key=f"{key_prefix}_btn_pagar_c_{op['id']}"):
                                     iso_c = to_iso(fecha_pago_c)
-                                    orig_by_id = {c["id"]: bool(c["paid"]) for c in cuotas_compra}
+                                    orig_by_id = {c["id"]: paid_bool_from_dict(c) for c in cuotas_compra}
                                     for iid, row in edited_qc.iterrows():
                                         iid = int(iid)
                                         new_paid = bool(row["Pagada"])
@@ -3102,7 +3102,7 @@ if is_admin_user:
                     else:
                         # Solo las pagadas en el mes
                         paid_at = c.get("paid_at")
-                        cond = bool(c["paid"]) and paid_at and (
+                        cond = paid_bool_from_dict(c) and paid_at and (
                             parse_iso_or_today(paid_at).year == int(anio_s) and
                             parse_iso_or_today(paid_at).month == int(mes_s)
                         )
@@ -4303,7 +4303,7 @@ with tab_cal:
     for op_ in ops_all:
         cuotas = list_installments(op_["id"], is_purchase=False) or []
         for c in cuotas:
-            if not bool(c["paid"]):
+            if not paid_bool_from_dict(c):
                 # fecha de vencimiento de cada cuota
                 base = parse_iso_or_today(op_.get("sale_date") or op_.get("created_at"))
                 due = add_months(base, max(int(c["idx"]) - 1, 0))
@@ -4701,7 +4701,7 @@ with tab_cal:
                                     show_amt = base_amt if es_toto else max(base_amt - comi_x, 0.0)  # neto si NO es Toto
                                     rows_v.append({
                                         "id": c["id"], "Cuota": c["idx"], "Monto": show_amt,
-                                        "Pagada": bool(c["paid"]), "Fecha pago (registrada)": fmt_dmy_from_iso(c["paid_at"]),
+                                        "Pagada": paid_bool_from_dict(c), "Fecha pago (registrada)": fmt_dmy_from_iso(c["paid_at"]),
                                         "Comentario": notes_orig_v.get(c["id"], "")
                                     })
                                 df_qv = pd.DataFrame(rows_v)[["id","Cuota","Monto","Pagada","Fecha pago (registrada)","Comentario"]].set_index("id", drop=True)
@@ -4724,7 +4724,7 @@ with tab_cal:
                                                             value=date.today(), key=f"cal_fpv_{op['id']}")
                                 if (not solo_lectura) and st.button("Guardar estado de cuotas VENTA", key=f"cal_btn_pagar_v_{op['id']}"):
                                     iso_v = to_iso(fecha_pago_v)
-                                    orig_by_id = {c["id"]: bool(c["paid"]) for c in cuotas_venta}
+                                    orig_by_id = {c["id"]: paid_bool_from_dict(c) for c in cuotas_venta}
                                     for iid, row in edited_qv.iterrows():
                                         iid = int(iid)
                                         new_paid = bool(row["Pagada"])
@@ -4759,7 +4759,7 @@ with tab_cal:
 
                                 df_qc = pd.DataFrame([{
                                     "id": c["id"], "Cuota": c["idx"], "Monto": float(c["amount"]),
-                                    "Pagada": bool(c["paid"]), "Fecha pago (registrada)": fmt_dmy_from_iso(c["paid_at"]),
+                                    "Pagada": paid_bool_from_dict(c), "Fecha pago (registrada)": fmt_dmy_from_iso(c["paid_at"]),
                                     "Comentario": notes_orig_c.get(c["id"], "")
                                 } for c in cuotas_compra])[["id","Cuota","Monto","Pagada","Fecha pago (registrada)","Comentario"]].set_index("id", drop=True)
 
@@ -4779,7 +4779,7 @@ with tab_cal:
                                                             value=date.today(), key=f"cal_fpc_{op['id']}")
                                 if (not solo_lectura) and st.button("Guardar estado de cuotas COMPRA", key=f"cal_btn_pagar_c_{op['id']}"):
                                     iso_c = to_iso(fecha_pago_c)
-                                    orig_by_id = {c["id"]: bool(c["paid"]) for c in cuotas_compra}
+                                    orig_by_id = {c["id"]: paid_bool_from_dict(c) for c in cuotas_compra}
                                     for iid, row in edited_qc.iterrows():
                                         iid = int(iid)
                                         new_paid = bool(row["Pagada"])

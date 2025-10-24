@@ -1590,35 +1590,17 @@ def rename_admin_user(old_username: str, new_username: str, current_password: st
     except sqlite3.IntegrityError:
         return False, "Ya existe un usuario con ese nombre."
 
-# ==== Helpers para normalizar pagos de cuotas (poner antes de la sección Inversores) ====
-from datetime import datetime
-import pandas as pd
-
 def _paid_bool(cuota_dict) -> bool:
-    """True si la cuota está paga (tolera 0/1, 'true', etc.) o si tiene paid_at."""
-    if cuota_dict is None:
-        return False
+    """True si la cuota está paga (tolera 0/1, 'true', '1', etc.) o si tiene paid_at."""
+    val = cuota_dict.get("paid", 0)
     if cuota_dict.get("paid_at"):
         return True
-    val = cuota_dict.get("paid", 0)
     if isinstance(val, bool):
         return val
     if isinstance(val, (int, float)):
         return bool(int(val))
     s = str(val).strip().lower()
     return s in ("1", "true", "t", "yes", "y", "si", "sí")
-
-def _to_paid_at_dt(x):
-    """Convierte paid_at a datetime (o NaT). Acepta 'YYYY-MM-DD' y 'YYYY-MM-DDTHH:MM:SS'."""
-    if x is None or x == "":
-        return pd.NaT
-    s = str(x).strip().replace("Z", "").replace("T", " ")
-    try:
-        return pd.to_datetime(s, errors="coerce")
-    except Exception:
-        return pd.NaT
-# =============================================================================
-
 
 def _parse_paid_at(x):
     """Convierte paid_at en datetime naive. Acepta 'YYYY-MM-DD' o 'YYYY-MM-DDTHH:MM:SS'."""
@@ -2404,7 +2386,7 @@ with tab_listar:
                                     "id": c["id"],
                                     "Cuota": c["idx"],
                                     "Monto": show_amt,  # mostrado neto (o bruto si Toto)
-                                    "Pagada": paid_bool_from_dict(c),
+                                    "Pagada": bool(c["paid"]),
                                     "Fecha pago (registrada)": fmt_dmy_from_iso(c["paid_at"]),
                                     "Comentario": notes_orig_v.get(c["id"], "")
                                 })
@@ -2439,7 +2421,7 @@ with tab_listar:
 
                             if (not solo_lectura) and st.button("Guardar estado de cuotas VENTA", key=f"{key_prefix}_btn_pagar_v_{op['id']}"):
                                 iso_v = to_iso(fecha_pago_v)
-                                orig_by_id = {c["id"]: paid_bool_from_dict(c) for c in cuotas_venta}
+                                orig_by_id = {c["id"]: bool(c["paid"]) for c in cuotas_venta}
                                 for iid, row in edited_qv.iterrows():
                                     iid = int(iid)
                                     new_paid = bool(row["Pagada"])
@@ -2481,7 +2463,7 @@ with tab_listar:
                                     "id": c["id"],
                                     "Cuota": c["idx"],
                                     "Monto": float(c["amount"]),
-                                    "Pagada": paid_bool_from_dict(c),
+                                    "Pagada": bool(c["paid"]),
                                     "Fecha pago (registrada)": fmt_dmy_from_iso(c["paid_at"]),
                                     "Comentario": notes_orig_c.get(c["id"], "")
                                 } for c in cuotas_compra])
@@ -2509,7 +2491,7 @@ with tab_listar:
 
                                 if (not solo_lectura) and st.button("Guardar estado de cuotas COMPRA", key=f"{key_prefix}_btn_pagar_c_{op['id']}"):
                                     iso_c = to_iso(fecha_pago_c)
-                                    orig_by_id = {c["id"]: paid_bool_from_dict(c) for c in cuotas_compra}
+                                    orig_by_id = {c["id"]: bool(c["paid"]) for c in cuotas_compra}
                                     for iid, row in edited_qc.iterrows():
                                         iid = int(iid)
                                         new_paid = bool(row["Pagada"])
@@ -2942,53 +2924,45 @@ if is_admin_user:
 
                     st.metric("A pagar este mes (impago)", f"${to_pay_month:,.2f}")
                     st.write(f"**Ganancia acumulada del inversor (18%)**: ${inv_ganancia:,.2f}")
-                    # === Pagado del mes SEGÚN FECHA DE PAGO (paid_at) ===
+                    # === Pagado del mes SEGÚN FECHA DE PAGO (paid_at), no por vencimiento ===
                     inv_ins = ins_df.copy()
-                    
-                    # Asegurar columna paid_at
-                    if "paid_at" not in inv_ins.columns:
-                        inv_ins["paid_at"] = None
-                    
-                    # Parsear a datetime (columna auxiliar)
                     inv_ins["_paid_at_dt"] = inv_ins["paid_at"].apply(_to_paid_at_dt)
                     
-                    # Si usás inv_year/inv_month en esa vista:
-                    year_f = int(inv_year)   if "inv_year"   in locals() else int(anio_actual)
-                    month_f = int(inv_month) if "inv_month"  in locals() else int(mes_actual)
-                    
                     pagado_mes = inv_ins[
-                        (inv_ins["tipo"] == "COMPRA") &
-                        (inv_ins["paid"] == True) &
-                        (inv_ins["_paid_at_dt"].dt.year  == year_f) &
-                        (inv_ins["_paid_at_dt"].dt.month == month_f)
+                        (inv_ins["tipo"]=="COMPRA") &
+                        (inv_ins["paid"]==True) &
+                        (inv_ins["_paid_at_dt"].dt.year==anio_actual) &
+                        (inv_ins["_paid_at_dt"].dt.month==mes_actual)
                     ]["amount"].sum()
                     
-                    st.metric(f"Pagado este mes (por fecha de pago)", f"${float(pagado_mes):,.2f}")
+                    st.metric(
+                        f"Pagado este mes (por fecha de pago)",
+                        f"${float(pagado_mes):,.2f}"
+                    )
                     
-                    # (Opcional) Detalle/resumen por inversor
+                    # (Opcional) Tabla-resumen por inversor de lo pagado en el mes
                     df_pag = inv_ins[
-                        (inv_ins["tipo"] == "COMPRA") &
-                        (inv_ins["paid"] == True) &
-                        (inv_ins["_paid_at_dt"].dt.year  == year_f) &
-                        (inv_ins["_paid_at_dt"].dt.month == month_f)
+                        (inv_ins["tipo"]=="COMPRA") &
+                        (inv_ins["paid"]==True) &
+                        (inv_ins["_paid_at_dt"].dt.year==anio_actual) &
+                        (inv_ins["_paid_at_dt"].dt.month==mes_actual)
                     ][["inversor","operation_id","idx","_paid_at_dt","amount"]].rename(
                         columns={"inversor":"Inversor","operation_id":"ID venta","idx":"Cuota #","_paid_at_dt":"Pagada el","amount":"Monto"}
                     )
                     
                     if not df_pag.empty:
                         df_pag = df_pag.sort_values(["Inversor","Pagada el","ID venta","Cuota #"])
-                        c1_, c2_ = st.columns([1,2])
-                        with c1_:
+                        c1, c2 = st.columns([1,2])
+                        with c1:
                             st.markdown("**Pagado del mes (por paid_at) — resumen**")
                             df_res_pag = df_pag.groupby("Inversor", as_index=False)["Monto"].sum().rename(columns={"Monto":"Pagado del mes"})
                             st.dataframe(df_res_pag.sort_values("Pagado del mes", ascending=False), use_container_width=True, hide_index=True)
-                        with c2_:
+                        with c2:
                             st.markdown("**Detalle de pagos del mes (por paid_at)**")
                             df_pag["Pagada el"] = df_pag["Pagada el"].dt.strftime("%d/%m/%Y")
                             st.dataframe(df_pag, use_container_width=True, hide_index=True)
                     else:
                         st.info("No hay cuotas pagadas en el mes seleccionado (según fecha de pago).")
-
 
                 st.divider()
                 c_exp1, c_exp2 = st.columns([1, 3])
@@ -3102,7 +3076,7 @@ if is_admin_user:
                     else:
                         # Solo las pagadas en el mes
                         paid_at = c.get("paid_at")
-                        cond = paid_bool_from_dict(c) and paid_at and (
+                        cond = bool(c["paid"]) and paid_at and (
                             parse_iso_or_today(paid_at).year == int(anio_s) and
                             parse_iso_or_today(paid_at).month == int(mes_s)
                         )
@@ -4303,7 +4277,7 @@ with tab_cal:
     for op_ in ops_all:
         cuotas = list_installments(op_["id"], is_purchase=False) or []
         for c in cuotas:
-            if not paid_bool_from_dict(c):
+            if not bool(c["paid"]):
                 # fecha de vencimiento de cada cuota
                 base = parse_iso_or_today(op_.get("sale_date") or op_.get("created_at"))
                 due = add_months(base, max(int(c["idx"]) - 1, 0))
@@ -4701,7 +4675,7 @@ with tab_cal:
                                     show_amt = base_amt if es_toto else max(base_amt - comi_x, 0.0)  # neto si NO es Toto
                                     rows_v.append({
                                         "id": c["id"], "Cuota": c["idx"], "Monto": show_amt,
-                                        "Pagada": paid_bool_from_dict(c), "Fecha pago (registrada)": fmt_dmy_from_iso(c["paid_at"]),
+                                        "Pagada": bool(c["paid"]), "Fecha pago (registrada)": fmt_dmy_from_iso(c["paid_at"]),
                                         "Comentario": notes_orig_v.get(c["id"], "")
                                     })
                                 df_qv = pd.DataFrame(rows_v)[["id","Cuota","Monto","Pagada","Fecha pago (registrada)","Comentario"]].set_index("id", drop=True)
@@ -4724,7 +4698,7 @@ with tab_cal:
                                                             value=date.today(), key=f"cal_fpv_{op['id']}")
                                 if (not solo_lectura) and st.button("Guardar estado de cuotas VENTA", key=f"cal_btn_pagar_v_{op['id']}"):
                                     iso_v = to_iso(fecha_pago_v)
-                                    orig_by_id = {c["id"]: paid_bool_from_dict(c) for c in cuotas_venta}
+                                    orig_by_id = {c["id"]: bool(c["paid"]) for c in cuotas_venta}
                                     for iid, row in edited_qv.iterrows():
                                         iid = int(iid)
                                         new_paid = bool(row["Pagada"])
@@ -4759,7 +4733,7 @@ with tab_cal:
 
                                 df_qc = pd.DataFrame([{
                                     "id": c["id"], "Cuota": c["idx"], "Monto": float(c["amount"]),
-                                    "Pagada": paid_bool_from_dict(c), "Fecha pago (registrada)": fmt_dmy_from_iso(c["paid_at"]),
+                                    "Pagada": bool(c["paid"]), "Fecha pago (registrada)": fmt_dmy_from_iso(c["paid_at"]),
                                     "Comentario": notes_orig_c.get(c["id"], "")
                                 } for c in cuotas_compra])[["id","Cuota","Monto","Pagada","Fecha pago (registrada)","Comentario"]].set_index("id", drop=True)
 
@@ -4779,7 +4753,7 @@ with tab_cal:
                                                             value=date.today(), key=f"cal_fpc_{op['id']}")
                                 if (not solo_lectura) and st.button("Guardar estado de cuotas COMPRA", key=f"cal_btn_pagar_c_{op['id']}"):
                                     iso_c = to_iso(fecha_pago_c)
-                                    orig_by_id = {c["id"]: paid_bool_from_dict(c) for c in cuotas_compra}
+                                    orig_by_id = {c["id"]: bool(c["paid"]) for c in cuotas_compra}
                                     for iid, row in edited_qc.iterrows():
                                         iid = int(iid)
                                         new_paid = bool(row["Pagada"])

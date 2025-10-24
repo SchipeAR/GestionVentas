@@ -2826,6 +2826,52 @@ if is_admin_user:
                 def _ganancia_inv_para(inv_nombre: str) -> float:
                     inv_ops = ops_df[ops_df["inversor"].fillna("").astype(str).str.upper() == inv_nombre.upper()]
                     return float((inv_ops["costo_neto"] * 0.18).sum())
+
+                # ===================== /Pagos a inversores por MES =====================
+                st.subheader("Cuotas a inversores — vista multi-mes")
+                
+                # Controles de rango
+                hoy = _date.today()
+                col_a, col_b, col_c = st.columns([1,1,1])
+                with col_a:
+                    base_year = st.number_input("Año base", min_value=2000, max_value=2100, value=hoy.year, step=1, key="inv_mm_year")
+                with col_b:
+                    base_month = st.number_input("Mes base", min_value=1, max_value=12, value=hoy.month, step=1, key="inv_mm_month")
+                with col_c:
+                    months = st.number_input("Meses a mostrar", min_value=1, max_value=12, value=6, step=1, key="inv_mm_span")
+                
+                ops_all = list_operations(user_scope_filters({})) or []
+                out, out_fmt = build_inv_multimes_table(ops_all, int(base_year), int(base_month), int(months))
+                
+                if out.empty:
+                    st.info("No hay datos para el rango seleccionado.")
+                else:
+                    st.dataframe(out_fmt, use_container_width=True, hide_index=True, height=280)
+                
+                    # Exportar con tu sistema existente (graba en SQLite 'inv_multimes_export' y dispara tu WebApp)
+                    c_exp1, c_exp2 = st.columns([1,1])
+                    with c_exp1:
+                        if st.button("📤 Exportar a Sheets (multi-mes)", key="btn_export_inv_multimes_existente"):
+                            try:
+                                df_export = out.copy().reset_index(drop=True)  # sin símbolos
+                                with sqlite3.connect(DB_PATH) as con:
+                                    df_export.to_sql("inv_multimes_export", con, if_exists="replace", index=False)
+                                exportar_a_sheets_webapp_desde_sqlite(DB_PATH)
+                                st.success("Exportado a Sheets con el sistema existente ✅")
+                            except Exception as e:
+                                st.error("No se pudo exportar la tabla multi-mes.")
+                                st.exception(e)
+                
+                    with c_exp2:
+                        if st.button("✨ Aplicar formato en Sheets", key="btn_format_inv_multimes"):
+                            try:
+                                formatear_hoja_backup("inv_multimes_export")  # si ya tenés esta función
+                                st.success("Formato aplicado en Sheets ✅")
+                            except Exception as e:
+                                st.error("No se pudo aplicar el formato.")
+                                st.exception(e)
+
+                # ===================== /Cuotas a inversores por MES =====================
                 
                 # ===================== Cuotas a inversores por MES =====================
                 st.divider()
@@ -2928,51 +2974,7 @@ if is_admin_user:
                                 df_view["pagado_en"] = df_view["paid_at_dt"].dt.strftime("%d/%m/%Y")
                                 df_det = df_view[["inversor","operation_id","idx","amount","pagado_en"]].sort_values(["inversor","pagado_en","operation_id","idx"])
                             st.dataframe(df_det, use_container_width=True, hide_index=True)
-                # ===================== /Pagos a inversores por MES =====================
-                st.subheader("Cuotas a inversores — vista multi-mes")
                 
-                # Controles de rango
-                hoy = _date.today()
-                col_a, col_b, col_c = st.columns([1,1,1])
-                with col_a:
-                    base_year = st.number_input("Año base", min_value=2000, max_value=2100, value=hoy.year, step=1, key="inv_mm_year")
-                with col_b:
-                    base_month = st.number_input("Mes base", min_value=1, max_value=12, value=hoy.month, step=1, key="inv_mm_month")
-                with col_c:
-                    months = st.number_input("Meses a mostrar", min_value=1, max_value=12, value=6, step=1, key="inv_mm_span")
-                
-                ops_all = list_operations(user_scope_filters({})) or []
-                out, out_fmt = build_inv_multimes_table(ops_all, int(base_year), int(base_month), int(months))
-                
-                if out.empty:
-                    st.info("No hay datos para el rango seleccionado.")
-                else:
-                    st.dataframe(out_fmt, use_container_width=True, hide_index=True, height=280)
-                
-                    # Exportar con tu sistema existente (graba en SQLite 'inv_multimes_export' y dispara tu WebApp)
-                    c_exp1, c_exp2 = st.columns([1,1])
-                    with c_exp1:
-                        if st.button("📤 Exportar a Sheets (multi-mes)", key="btn_export_inv_multimes_existente"):
-                            try:
-                                df_export = out.copy().reset_index(drop=True)  # sin símbolos
-                                with sqlite3.connect(DB_PATH) as con:
-                                    df_export.to_sql("inv_multimes_export", con, if_exists="replace", index=False)
-                                exportar_a_sheets_webapp_desde_sqlite(DB_PATH)
-                                st.success("Exportado a Sheets con el sistema existente ✅")
-                            except Exception as e:
-                                st.error("No se pudo exportar la tabla multi-mes.")
-                                st.exception(e)
-                
-                    with c_exp2:
-                        if st.button("✨ Aplicar formato en Sheets", key="btn_format_inv_multimes"):
-                            try:
-                                formatear_hoja_backup("inv_multimes_export")  # si ya tenés esta función
-                                st.success("Formato aplicado en Sheets ✅")
-                            except Exception as e:
-                                st.error("No se pudo aplicar el formato.")
-                                st.exception(e)
-
-                # ===================== /Cuotas a inversores por MES =====================
 
                 st.divider()
                 st.subheader("Detalle por inversor")

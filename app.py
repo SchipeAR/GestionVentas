@@ -2827,10 +2827,7 @@ def build_inv_multimes_table(ops_all, start_year:int, start_month:int, months:in
 
 # =========================================
 
-def _due_for(op, idx: int):
-                """Vencimiento mensual (base: sale_date o created_at) → add_months(base, idx-1)."""
-                base = parse_iso_or_today(op.get("sale_date") or op.get("created_at"))
-                return add_months(base, max(int(idx) - 1, 0))
+
 # --------- INVERSORES (DETALLE POR CADA UNO) ---------
 # Ocultamos la pestaña a los vendedores para no exponer datos globales
 if is_admin_user:
@@ -3338,7 +3335,10 @@ if is_admin_user:
                     ids_usd.add(int(op["id"]))
 
             # Helpers de fecha de vencimiento (mensual) y filtro mensual
-            
+            def _due_for(op, idx: int):
+                """Vencimiento mensual (base: sale_date o created_at) → add_months(base, idx-1)."""
+                base = parse_iso_or_today(op.get("sale_date") or op.get("created_at"))
+                return add_months(base, max(int(idx) - 1, 0))
 
             def _is_in_month(dt):
                 return (dt.year == int(anio)) and (dt.month == int(mes))

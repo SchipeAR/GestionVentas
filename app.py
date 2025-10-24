@@ -2750,63 +2750,63 @@ def build_inv_multimes_table(ops_all, start_year:int, start_month:int, months:in
         data[inv] = {}
 
     for k in range(months):
-    yy, mm = _add_months(y, m, k)
-    lab = _month_label(yy, mm)
-    col_mes    = lab
-    col_pagado = f"{lab} — PAGADO"
-    col_apagar = f"{lab} — A PAGAR"
-
-    # --- Cortes de tiempo de ese mes ---
-    # Fin de mes (para comparar con paid_at)
-    last_day = _cal.monthrange(yy, mm)[1]
-    eom_dt   = _dt(yy, mm, last_day, 23, 59, 59)
-
-    # 1) Lo que VENCE en el mes (para la columna MES)
-    df_mes_due = df[(df["due_y"] == yy) & (df["due_m"] == mm)]
-
-    # 2) Lo pagado en el mes (paid_at dentro de ese mes)
-    df_mes_paid = df[
-        df["paid"] & df["paid_at"].notna() &
-        (df["paid_at"].dt.year == yy) & (df["paid_at"].dt.month == mm)
-    ]
-
-    # 3) Lo VENCIDO ACUMULADO hasta fin de mes (para “A PAGAR”)
-    df_due_upto = df[
-        (df["due_y"] < yy) | ((df["due_y"] == yy) & (df["due_m"] <= mm))
-    ]
-
-    # 4) Lo PAGADO ACUMULADO hasta fin de mes (para “A PAGAR”)
-    df_paid_upto = df[
-        df["paid"] & df["paid_at"].notna() & (df["paid_at"] <= eom_dt)
-    ]
-
-    # ----- por inversor -----
-    for inv in inv_list:
-        # MES (vencimientos del mes)
-        due_total = float(df_mes_due.loc[df_mes_due["inversor"] == inv, "amount"].sum())
-
-        # PAGADO (pagado ese mes)
-        pagado_total = float(df_mes_paid.loc[df_mes_paid["inversor"] == inv, "amount"].sum())
-
-        # A PAGAR (acumulado): vencido hasta fin de mes - pagado hasta fin de mes
-        vencido_acum = float(df_due_upto.loc[df_due_upto["inversor"] == inv, "amount"].sum())
-        pagado_acum  = float(df_paid_upto.loc[df_paid_upto["inversor"] == inv, "amount"].sum())
-        apagar_total = max(vencido_acum - pagado_acum, 0.0)
-
-        data[inv][col_mes]    = due_total
-        data[inv][col_pagado] = pagado_total
-        data[inv][col_apagar] = apagar_total
-
-    # ----- TOTAL general -----
-    due_total_g     = float(df_mes_due["amount"].sum())
-    pagado_total_g  = float(df_mes_paid["amount"].sum())
-    vencido_acum_g  = float(df_due_upto["amount"].sum())
-    pagado_acum_g   = float(df_paid_upto["amount"].sum())
-    apagar_total_g  = max(vencido_acum_g - pagado_acum_g, 0.0)
-
-    data["TOTAL general"][col_mes]    = due_total_g
-    data["TOTAL general"][col_pagado] = pagado_total_g
-    data["TOTAL general"][col_apagar] = apagar_total_g
+        yy, mm = _add_months(y, m, k)
+        lab = _month_label(yy, mm)
+        col_mes    = lab
+        col_pagado = f"{lab} — PAGADO"
+        col_apagar = f"{lab} — A PAGAR"
+    
+        # --- Cortes de tiempo de ese mes ---
+        # Fin de mes (para comparar con paid_at)
+        last_day = _cal.monthrange(yy, mm)[1]
+        eom_dt   = _dt(yy, mm, last_day, 23, 59, 59)
+    
+        # 1) Lo que VENCE en el mes (para la columna MES)
+        df_mes_due = df[(df["due_y"] == yy) & (df["due_m"] == mm)]
+    
+        # 2) Lo pagado en el mes (paid_at dentro de ese mes)
+        df_mes_paid = df[
+            df["paid"] & df["paid_at"].notna() &
+            (df["paid_at"].dt.year == yy) & (df["paid_at"].dt.month == mm)
+        ]
+    
+        # 3) Lo VENCIDO ACUMULADO hasta fin de mes (para “A PAGAR”)
+        df_due_upto = df[
+            (df["due_y"] < yy) | ((df["due_y"] == yy) & (df["due_m"] <= mm))
+        ]
+    
+        # 4) Lo PAGADO ACUMULADO hasta fin de mes (para “A PAGAR”)
+        df_paid_upto = df[
+            df["paid"] & df["paid_at"].notna() & (df["paid_at"] <= eom_dt)
+        ]
+    
+        # ----- por inversor -----
+        for inv in inv_list:
+            # MES (vencimientos del mes)
+            due_total = float(df_mes_due.loc[df_mes_due["inversor"] == inv, "amount"].sum())
+    
+            # PAGADO (pagado ese mes)
+            pagado_total = float(df_mes_paid.loc[df_mes_paid["inversor"] == inv, "amount"].sum())
+    
+            # A PAGAR (acumulado): vencido hasta fin de mes - pagado hasta fin de mes
+            vencido_acum = float(df_due_upto.loc[df_due_upto["inversor"] == inv, "amount"].sum())
+            pagado_acum  = float(df_paid_upto.loc[df_paid_upto["inversor"] == inv, "amount"].sum())
+            apagar_total = max(vencido_acum - pagado_acum, 0.0)
+    
+            data[inv][col_mes]    = due_total
+            data[inv][col_pagado] = pagado_total
+            data[inv][col_apagar] = apagar_total
+    
+        # ----- TOTAL general -----
+        due_total_g     = float(df_mes_due["amount"].sum())
+        pagado_total_g  = float(df_mes_paid["amount"].sum())
+        vencido_acum_g  = float(df_due_upto["amount"].sum())
+        pagado_acum_g   = float(df_paid_upto["amount"].sum())
+        apagar_total_g  = max(vencido_acum_g - pagado_acum_g, 0.0)
+    
+        data["TOTAL general"][col_mes]    = due_total_g
+        data["TOTAL general"][col_pagado] = pagado_total_g
+        data["TOTAL general"][col_apagar] = apagar_total_g
 
     out_numeric = pd.DataFrame.from_dict(data, orient="index").reset_index().rename(columns={"index":" "})
     # formato $
